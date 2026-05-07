@@ -52,6 +52,7 @@ No live execution code exists yet — this project is in the research/backtestin
 ## Docs
 
 - [`docs/strategies/`](docs/strategies/) — strategy design documents (Spanish)
+- [`docs/data_known_issues.md`](docs/data_known_issues.md) — known data quality issues (4h gaps, forward-fill policy)
 - [`CHANGELOG.md`](CHANGELOG.md) — version history
 
 ## License
