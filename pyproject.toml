@@ -11,6 +11,7 @@ dependencies = [
     "pydantic-settings>=2.3",
     "python-dotenv>=1.0",
     "loguru>=0.7",
+    "matplotlib>=3.9",
 ]
 
 [project.optional-dependencies]
@@ -44,3 +45,9 @@ select = ["E", "F", "I", "UP", "B"]
 python_version = "3.11"
 strict = true
 ignore_missing_imports = true
+
+[dependency-groups]
+dev = [
+    "ipykernel>=7.2.0",
+    "jupyter>=1.1.1",
+]
