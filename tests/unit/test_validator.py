@@ -46,6 +46,7 @@ def _make_clean_df(
         "close_time_utc": timestamps + pd.Timedelta(milliseconds=interval_ms - 1),
         "quote_volume": 5_050_000.0,
         "num_trades": 1000,
+        "is_synthetic": False,
     })
 
 
@@ -348,3 +349,53 @@ class TestSummaryText:
     def test_unknown_interval_raises(self) -> None:
         with pytest.raises(ValueError, match="Unknown interval"):
             DataValidator().validate(_make_clean_df(5), "2d")
+
+
+# ---------------------------------------------------------------------------
+# Synthetic candle reporting
+# ---------------------------------------------------------------------------
+
+class TestSyntheticCandles:
+    def test_validator_reports_synthetic_count(self) -> None:
+        """synthetic_count equals the number of is_synthetic=True rows."""
+        df = _make_clean_df(10)
+        # Inject 5 synthetic candles by flipping the flag
+        df.loc[[1, 3, 5, 7, 9], "is_synthetic"] = True
+
+        report = DataValidator().validate(df, INTERVAL)
+
+        assert report.synthetic_count == 5
+        assert report.has_synthetic_candles is True
+
+    def test_validator_passes_with_synthetic_candles(self) -> None:
+        """A DataFrame with synthetic candles but no real gaps must be is_valid=True."""
+        from btc_quant.data.cleaner import GapFiller
+
+        df = _make_clean_df(10)
+        df_with_gap = df.drop(index=3).reset_index(drop=True)  # 1-day gap
+        df_filled, _ = GapFiller().fill_gaps(df_with_gap, INTERVAL)
+
+        report = DataValidator().validate(df_filled, INTERVAL)
+
+        assert report.is_valid is True
+        assert report.synthetic_count == 1
+        assert report.has_synthetic_candles is True
+
+    def test_no_synthetic_by_default(self) -> None:
+        """Clean DataFrame has synthetic_count=0 and has_synthetic_candles=False."""
+        report = DataValidator().validate(_make_clean_df(10), INTERVAL)
+
+        assert report.synthetic_count == 0
+        assert report.has_synthetic_candles is False
+
+    def test_summary_mentions_synthetic_when_present(self) -> None:
+        """summary_text includes synthetic count when has_synthetic_candles is True."""
+        from btc_quant.data.cleaner import GapFiller
+
+        df_filled, _ = GapFiller().fill_gaps(
+            _make_clean_df(10).drop(index=3).reset_index(drop=True), INTERVAL
+        )
+        report = DataValidator().validate(df_filled, INTERVAL)
+
+        assert "synthetic" in report.summary_text.lower()
+        assert str(report.synthetic_count) in report.summary_text

@@ -84,6 +84,8 @@ class TestFetchOhlcvSchema:
             assert df[col].dtype == "float64", f"Expected float64 for {col}"
 
         assert df["num_trades"].dtype == "int64"
+        assert df["is_synthetic"].dtype == bool
+        assert (df["is_synthetic"] == False).all()  # noqa: E712
 
 
 # ---------------------------------------------------------------------------

@@ -40,6 +40,7 @@ def _make_df(n: int = 5, start: datetime = START) -> pd.DataFrame:
         "close_time_utc": timestamps + pd.Timedelta(milliseconds=INTERVAL_MS - 1),
         "quote_volume":   5_050_000.0,
         "num_trades":     1000,
+        "is_synthetic":   False,
     })
 
 
@@ -188,6 +189,15 @@ class TestRoundtrip:
         loaded = storage.load("BTCUSDT", "1d", base_path=tmp_path)
 
         assert loaded["num_trades"].dtype == "int64"
+
+    def test_roundtrip_preserves_bool_is_synthetic(self, tmp_path: Path) -> None:
+        df = _make_df(5)
+        storage = ParquetStorage()
+        storage.save(df, "BTCUSDT", "1d", base_path=tmp_path)
+        loaded = storage.load("BTCUSDT", "1d", base_path=tmp_path)
+
+        assert loaded["is_synthetic"].dtype == bool
+        assert (loaded["is_synthetic"] == False).all()  # noqa: E712
 
     def test_roundtrip_preserves_timestamp_precision(self, tmp_path: Path) -> None:
         df = _make_df(5)

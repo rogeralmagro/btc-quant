@@ -32,6 +32,7 @@ OHLCV_COLUMNS = [
     "close_time_utc",
     "quote_volume",
     "num_trades",
+    "is_synthetic",  # False for all real candles; True for gap-filled synthetic ones
 ]
 
 # Milliseconds per interval — used for pagination step and incremental updates
@@ -292,6 +293,7 @@ class BinanceDownloader:
         for col in ("open", "high", "low", "close", "volume", "quote_volume"):
             df[col] = df[col].astype("float64")
         df["num_trades"] = df["num_trades"].astype("int64")
+        df["is_synthetic"] = False
 
         return df[OHLCV_COLUMNS].copy()
 
