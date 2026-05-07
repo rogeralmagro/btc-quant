@@ -18,6 +18,7 @@ from datetime import datetime, timezone
 import pandas as pd
 from loguru import logger
 
+from btc_quant.data.cleaner import GapFiller
 from btc_quant.data.downloader import BinanceDownloader
 from btc_quant.data.storage import ParquetStorage
 from btc_quant.data.validator import DataValidator
@@ -72,10 +73,11 @@ def _process_interval(
     start: datetime,
     update_only: bool,
     downloader: BinanceDownloader,
+    gap_filler: GapFiller,
     validator: DataValidator,
     storage: ParquetStorage,
 ) -> dict:
-    """Download, validate, and persist one symbol/interval combination.
+    """Download, gap-fill, validate, and persist one symbol/interval combination.
 
     Returns a summary record dict consumed by _print_summary.
     Does NOT raise — all errors are caught, logged, and reflected in the record.
@@ -84,6 +86,7 @@ def _process_interval(
         "symbol": symbol,
         "interval": interval,
         "rows": None,
+        "synthetic": None,
         "start": None,
         "end": None,
         "status": "FAILED",
@@ -116,6 +119,16 @@ def _process_interval(
                 logger.info("[{}/{}] Mode: full history download", symbol, interval)
             df = downloader.fetch_full_history(symbol, interval, start)
 
+        logger.info("[{}/{}] Applying gap filler...", symbol, interval)
+        df, fill_report = gap_filler.fill_gaps(df, interval)
+        if fill_report.total_synthetic_added > 0:
+            logger.info("[{}/{}] {}", symbol, interval, fill_report)
+        if not fill_report.is_clean:
+            logger.error(
+                "[{}/{}] {} gap(s) exceeded 48h threshold and were NOT filled",
+                symbol, interval, len(fill_report.rejected_gaps),
+            )
+
         logger.info("[{}/{}] Validating {} candles...", symbol, interval, len(df))
         report = validator.validate(df, interval)
 
@@ -136,13 +149,18 @@ def _process_interval(
 
         storage.save(df, symbol, interval, BASE_PATH)
 
+        status = "OK*" if report.has_synthetic_candles else "OK"
         record.update({
             "rows": report.total_rows,
+            "synthetic": report.synthetic_count,
             "start": report.date_range[0].date(),
             "end": report.date_range[1].date(),
-            "status": "OK",
+            "status": status,
         })
-        logger.info("[{}/{}] Done — {} rows saved", symbol, interval, report.total_rows)
+        logger.info(
+            "[{}/{}] Done — {} rows saved ({} synthetic)",
+            symbol, interval, report.total_rows, report.synthetic_count,
+        )
 
     except Exception:
         logger.exception("[{}/{}] Unexpected error", symbol, interval)
@@ -153,15 +171,16 @@ def _process_interval(
 
 def _print_summary(records: list[dict]) -> None:
     """Print an ASCII summary table to stdout."""
-    headers = ["Symbol", "Interval", "Rows", "Start", "End", "Status"]
+    headers = ["Symbol", "Interval", "Rows", "Synthetic", "Start", "End", "Status"]
 
     rows = [
         [
             r["symbol"],
             r["interval"],
-            str(r["rows"]) if r["rows"] is not None else "—",
-            str(r["start"]) if r["start"] is not None else "—",
-            str(r["end"])   if r["end"]   is not None else "—",
+            str(r["rows"])      if r["rows"]      is not None else "—",
+            str(r["synthetic"]) if r["synthetic"]  is not None else "—",
+            str(r["start"])     if r["start"]      is not None else "—",
+            str(r["end"])       if r["end"]        is not None else "—",
             r["status"],
         ]
         for r in records
@@ -205,6 +224,7 @@ def main() -> None:
     )
 
     downloader = BinanceDownloader()
+    gap_filler = GapFiller()
     validator = DataValidator()
     storage = ParquetStorage()
 
@@ -213,13 +233,13 @@ def main() -> None:
         records.append(
             _process_interval(
                 args.symbol, interval, start, args.update_only,
-                downloader, validator, storage,
+                downloader, gap_filler, validator, storage,
             )
         )
 
     _print_summary(records)
 
-    failed = [r for r in records if r["status"] != "OK"]
+    failed = [r for r in records if r["status"] not in ("OK", "OK*")]
     if failed:
         logger.error(
             "{} interval(s) failed: {}",
