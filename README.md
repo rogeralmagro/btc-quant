@@ -14,7 +14,7 @@ The system has two layers:
 | Week | Milestone |
 |------|-----------|
 | ✅ W1 | Repo scaffold + Binance data pipeline |
-| ⬜ W2 | Indicator library (RSI, MVRV-Z, Fear & Greed, NVT) |
+| ✅ W2 | Indicator library (RSI, MVRV-Z, Fear & Greed, NVT) |
 | ⬜ W3 | Core DCA strategy + backtest harness |
 | ⬜ W4 | Tactical overlay signals + confluence logic |
 | ⬜ W5–6 | Full backtest + walk-forward validation |
