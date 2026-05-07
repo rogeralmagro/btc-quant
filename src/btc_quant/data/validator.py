@@ -60,6 +60,8 @@ class ValidationReport:
     anomalies: list[Anomaly]
     duplicates: int
     summary_text: str
+    has_synthetic_candles: bool = False  # True when GapFiller inserted forward-fill candles
+    synthetic_count: int = 0            # Number of synthetic candles in df
 
 
 class DataValidator:
@@ -106,6 +108,11 @@ class DataValidator:
         )
         coverage_ok = self._check_coverage(df, interval_ms)
 
+        # Synthetic candle count — informational only, does not affect is_valid
+        synthetic_count = (
+            int(df["is_synthetic"].sum()) if "is_synthetic" in df.columns else 0
+        )
+
         hard_errors = [a for a in anomalies if a.severity == "error"]
         is_valid = (
             duplicates == 0
@@ -130,6 +137,8 @@ class DataValidator:
             anomalies=anomalies,
             duplicates=duplicates,
             summary_text="",
+            has_synthetic_candles=synthetic_count > 0,
+            synthetic_count=synthetic_count,
         )
         report.summary_text = self._build_summary(report, interval)
 
@@ -255,6 +264,8 @@ class DataValidator:
         errors = [a for a in report.anomalies if a.severity == "error"]
         warnings = [a for a in report.anomalies if a.severity == "warning"]
         lines.append(f"  anomalies  : {len(errors)} error(s), {len(warnings)} warning(s)")
+        if report.has_synthetic_candles:
+            lines.append(f"  synthetic  : {report.synthetic_count} candle(s) (forward-filled, is_synthetic=True)")
 
         for gs, ge, n in report.gaps[:3]:
             lines.append(f"    gap: {gs.date()} → {ge.date()} ({n} missing)")
