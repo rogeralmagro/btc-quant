@@ -1,4 +1,23 @@
-"""ExecutionSimulator: V1 simple-cost order execution for backtest."""
+"""ExecutionSimulator: order execution for backtest.
+
+Two implementations are provided:
+
+* ``ExecutionSimulatorV1`` (aliased as ``ExecutionSimulator``):
+  Fixed fee + slippage rates. Simple, fast, and always correct regardless
+  of how much historical data is available. Use this for unit tests, quick
+  strategy sketches, and any context where regime data is unavailable.
+
+* ``ExecutionSimulatorV2``:
+  Regime-aware cost model. Slippage varies by ``MarketRegime`` (NORMAL →
+  0.05 %, VOLATILE → 0.15 %, STRESS → 0.50 %, CASCADE → 1.00 %). Fee
+  remains fixed at 0.1 % per side. Requires a ``RegimeDetector`` instance
+  and at least ``atr_period`` rows of 1-day history on each call. When
+  history is insufficient the executor falls back to NORMAL-regime slippage
+  and records this in ``ExecutedOrder.notes``.
+
+The ``BacktestEngine`` detects which version is in use and passes the
+appropriate arguments automatically.
+"""
 
 from __future__ import annotations
 
@@ -7,7 +26,7 @@ from typing import Any
 
 import pandas as pd
 
-from btc_quant.backtester.models.enums import OrderSide, OrderStatus, OrderType, StrategyTag
+from btc_quant.backtester.models.enums import MarketRegime, OrderSide, OrderStatus, OrderType, StrategyTag
 from btc_quant.backtester.models.order import ExecutedOrder, Order, make_order
 from btc_quant.backtester.models.position import Position
 
@@ -26,7 +45,7 @@ def _bar_ts(bar: pd.Series) -> Any:
     return dt
 
 
-class ExecutionSimulator:
+class ExecutionSimulatorV1:
     """Simulates order execution in backtest with a simple cost model.
 
     Execution model
@@ -189,3 +208,191 @@ class ExecutionSimulator:
             status=OrderStatus.FILLED,
             notes=f"{tp_or_stop}_triggered",
         )
+
+
+# Backward-compatibility alias — all existing imports of ``ExecutionSimulator``
+# continue to resolve to the V1 class without any code changes.
+ExecutionSimulator = ExecutionSimulatorV1
+
+
+# ---------------------------------------------------------------------------
+# ExecutionSimulatorV2 — regime-aware cost model
+# ---------------------------------------------------------------------------
+
+
+class ExecutionSimulatorV2:
+    """Regime-aware execution simulator.
+
+    Slippage depends on the market regime detected by a ``RegimeDetector``
+    at execution time. Fees are fixed at ``fee_rate`` per side (same as V1).
+
+    Slippage rates per regime
+    -------------------------
+    NORMAL:   0.05 % (same as V1 default)
+    VOLATILE: 0.15 %
+    STRESS:   0.50 %
+    CASCADE:  1.00 %
+
+    Fallback
+    --------
+    If the regime detector raises ``ValueError`` (insufficient history for
+    ATR computation), V2 silently falls back to NORMAL-regime slippage and
+    records ``"regime:normal(fallback)"`` in ``ExecutedOrder.notes``. This
+    keeps the engine functional during the warmup period at the start of a
+    backtest.
+
+    Decision responsibility
+    -----------------------
+    The executor models the *cost* of execution. Whether to block entry
+    during CASCADE is the *strategy's* responsibility (the strategy queries
+    the RegimeDetector independently). The executor never refuses to fill.
+    """
+
+    SLIPPAGE_BY_REGIME: dict[MarketRegime, float] = {
+        MarketRegime.NORMAL:   0.0005,
+        MarketRegime.VOLATILE: 0.0015,
+        MarketRegime.STRESS:   0.005,
+        MarketRegime.CASCADE:  0.01,
+    }
+
+    def __init__(
+        self,
+        regime_detector: "RegimeDetector",  # type: ignore[name-defined]  # noqa: F821
+        fee_rate: float = 0.001,
+    ) -> None:
+        if not (0 <= fee_rate <= 0.01):
+            raise ValueError(f"fee_rate must be in [0, 0.01], got {fee_rate}")
+        self._detector = regime_detector
+        self._fee_rate = fee_rate
+
+    # ── Market-order execution ────────────────────────────────────────────────
+
+    def execute(
+        self,
+        order: Order,
+        next_bar: pd.Series,
+        historical_data_1d: pd.DataFrame,
+    ) -> ExecutedOrder:
+        """Execute a MARKET order at the open of next_bar with regime-aware slippage.
+
+        Args:
+            order:             MARKET order to fill.
+            next_bar:          Bar at whose open the order fires (needs ``open``,
+                               ``high``, ``low``, ``timestamp_utc``).
+            historical_data_1d: Closed 1-day candles visible at execution time.
+                               Used by the RegimeDetector. If insufficient
+                               (< atr_period), falls back to NORMAL slippage.
+
+        Raises:
+            NotImplementedError: for non-MARKET orders.
+        """
+        if order.order_type != OrderType.MARKET:
+            raise NotImplementedError(
+                f"V2 ExecutionSimulator only handles MARKET orders; "
+                f"got {order.order_type!r}."
+            )
+
+        regime, fallback = self._detect_regime(historical_data_1d, next_bar)
+        slippage_rate = self.SLIPPAGE_BY_REGIME[regime]
+        base_price = float(next_bar["open"])
+
+        if order.side == OrderSide.BUY:
+            exec_price = base_price * (1.0 + slippage_rate)
+        else:
+            exec_price = base_price * (1.0 - slippage_rate)
+
+        notional = exec_price * order.quantity_btc
+        fees_eur = notional * self._fee_rate
+        slippage_eur = (exec_price - base_price) * order.quantity_btc
+
+        suffix = "(fallback)" if fallback else ""
+        return ExecutedOrder(
+            order=order,
+            executed_at_utc=_bar_ts(next_bar),
+            executed_price=exec_price,
+            executed_quantity_btc=order.quantity_btc,
+            fees_eur=fees_eur,
+            slippage_eur=slippage_eur,
+            status=OrderStatus.FILLED,
+            notes=f"regime:{regime.value}{suffix}",
+        )
+
+    # ── Stop / TP detection ──────────────────────────────────────────────────
+
+    def execute_stop_or_tp(
+        self,
+        position: Position,
+        bar: pd.Series,
+        tp_or_stop: str,
+        level_price: float,
+        historical_data_1d: pd.DataFrame,
+    ) -> ExecutedOrder | None:
+        """Detect and fill a stop-loss or take-profit with regime-aware slippage.
+
+        Trigger logic is identical to V1. After determining the base fill price
+        (gap or level), an additional regime-based slippage is applied to model
+        market-impact costs (e.g. wider spreads during CASCADE).
+
+        For LONG-position exits (SELL): slippage worsens the fill downward.
+        ``slippage_eur = (exec_price − level_price) × qty`` captures both the
+        gap (if any) and the regime impact combined.
+        """
+        bar_open = float(bar["open"])
+        bar_low = float(bar["low"])
+        bar_high = float(bar["high"])
+        bar_time = _bar_ts(bar)
+        qty = position.quantity_btc
+        is_stop = tp_or_stop == "stop"
+
+        # Trigger detection (same as V1)
+        if is_stop:
+            if bar_low > level_price:
+                return None
+            base_fill = bar_open if bar_open <= level_price else level_price
+        else:
+            if bar_high < level_price:
+                return None
+            base_fill = bar_open if bar_open >= level_price else level_price
+
+        # Apply regime slippage (SELL → fills lower by slippage_rate)
+        regime, fallback = self._detect_regime(historical_data_1d, bar)
+        slippage_rate = self.SLIPPAGE_BY_REGIME[regime]
+        exec_price = base_fill * (1.0 - slippage_rate)
+
+        notional = exec_price * qty
+        fees_eur = notional * self._fee_rate
+        slippage_eur = (exec_price - level_price) * qty
+
+        exit_order = make_order(
+            strategy_tag=position.strategy_tag,
+            timestamp_utc=bar_time,
+            symbol=position.symbol,
+            side=OrderSide.SELL,
+            order_type=OrderType.MARKET,
+            quantity_btc=qty,
+        )
+        suffix = "(fallback)" if fallback else ""
+        return ExecutedOrder(
+            order=exit_order,
+            executed_at_utc=bar_time,
+            executed_price=exec_price,
+            executed_quantity_btc=qty,
+            fees_eur=fees_eur,
+            slippage_eur=slippage_eur,
+            status=OrderStatus.FILLED,
+            notes=f"{tp_or_stop}_triggered regime:{regime.value}{suffix}",
+        )
+
+    # ── Internal ─────────────────────────────────────────────────────────────
+
+    def _detect_regime(
+        self,
+        historical_data_1d: pd.DataFrame,
+        bar: pd.Series,
+    ) -> tuple[MarketRegime, bool]:
+        """Return (regime, is_fallback). Fallback=True when history is insufficient."""
+        try:
+            regime = self._detector.detect_for_executor(historical_data_1d, bar)
+            return regime, False
+        except ValueError:
+            return MarketRegime.NORMAL, True

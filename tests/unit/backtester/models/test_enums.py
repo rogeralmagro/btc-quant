@@ -8,6 +8,7 @@ import pytest
 
 from btc_quant.backtester.models.enums import (
     CircuitBreakerState,
+    MarketRegime,
     OrderSide,
     OrderStatus,
     OrderType,
@@ -22,6 +23,7 @@ ALL_ENUMS = [
     TradeOutcome,
     StrategyTag,
     CircuitBreakerState,
+    MarketRegime,
 ]
 
 
@@ -73,6 +75,12 @@ class TestEnumValuesAreStrings:
         assert CircuitBreakerState.PAUSED == "paused"
         assert CircuitBreakerState.HALTED == "halted"
         assert CircuitBreakerState.KILLED == "killed"
+
+    def test_market_regime_enum_values(self) -> None:
+        assert MarketRegime.NORMAL == "normal"
+        assert MarketRegime.VOLATILE == "volatile"
+        assert MarketRegime.STRESS == "stress"
+        assert MarketRegime.CASCADE == "cascade"
 
 
 class TestEnumSerializable:

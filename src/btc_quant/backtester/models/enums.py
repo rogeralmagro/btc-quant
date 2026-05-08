@@ -45,6 +45,22 @@ class StrategyTag(str, Enum):
     BUY_AND_HOLD_BENCHMARK = "buy_and_hold_benchmark"
 
 
+class MarketRegime(str, Enum):
+    """Volatility regime used to select cost parameters in ExecutionSimulatorV2.
+
+    NORMAL:   ATR(14) < 1.5 × annual ATR average  → slippage 0.05 %
+    VOLATILE: 1.5 × avg ≤ ATR < 3.0 × avg          → slippage 0.15 %
+    STRESS:   ATR(14) ≥ 3.0 × annual ATR average   → slippage 0.50 %
+    CASCADE:  intra-bar move > 10 % of open        → slippage 1.00 %
+              (overrides NORMAL/VOLATILE/STRESS on the bar being executed)
+    """
+
+    NORMAL = "normal"
+    VOLATILE = "volatile"
+    STRESS = "stress"
+    CASCADE = "cascade"
+
+
 class CircuitBreakerState(str, Enum):
     NORMAL = "normal"
     PAUSED = "paused"

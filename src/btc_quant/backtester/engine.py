@@ -8,7 +8,7 @@ from uuid import UUID, uuid4
 
 import pandas as pd
 
-from btc_quant.backtester.execution_simulator import ExecutionSimulator
+from btc_quant.backtester.execution_simulator import ExecutionSimulator, ExecutionSimulatorV2
 from btc_quant.backtester.market_context import MarketContext
 from btc_quant.backtester.models.enums import OrderSide, OrderType, StrategyTag
 from btc_quant.backtester.models.order import ExecutedOrder, make_order
@@ -134,6 +134,13 @@ class BacktestEngine:
                 "Pass profit_recycle_pct=0.0 to disable recycling."
             )
 
+        # V2 simulator requires 1d data for regime detection
+        if isinstance(execution_simulator, ExecutionSimulatorV2) and "1d" not in data:
+            raise ValueError(
+                "ExecutionSimulatorV2 requires '1d' timeframe data for regime detection. "
+                "Add '1d' to the data dict or switch to ExecutionSimulatorV1."
+            )
+
         self._strategies = strategies
         self._strategy_by_tag: dict[StrategyTag, StrategyBase] = {
             s.strategy_tag: s for s in strategies
@@ -181,6 +188,50 @@ class BacktestEngine:
     def _is_strategy_aligned(self, strategy: StrategyBase, bar_close_time: datetime) -> bool:
         tf_set = self._aligned_close_times.get(strategy.primary_timeframe(), set())
         return bar_close_time in tf_set
+
+    # ── V1 / V2 dispatch helpers ─────────────────────────────────────────────
+
+    def _is_v2(self) -> bool:
+        return isinstance(self._simulator, ExecutionSimulatorV2)
+
+    def _get_visible_1d_history(self) -> pd.DataFrame:
+        """Return all 1d bars visible to MarketContext right now (for V2 regime detection)."""
+        n = len(self._data["1d"])
+        return self._market_context.get_history("1d", lookback=n)
+
+    def _slippage_rate_for_sizing(self, bar: pd.Series, side: OrderSide) -> float:
+        """Return the slippage rate to use when converting quote_amount_eur → qty.
+
+        For V2 the regime is detected from current visible history so the sizing
+        estimate uses the same rate as the actual execution — no overdraft risk.
+        """
+        if self._is_v2():
+            from btc_quant.backtester.models.enums import MarketRegime
+            try:
+                history = self._get_visible_1d_history()
+                regime = self._simulator._detector.detect_for_executor(history, bar)  # type: ignore[union-attr]
+            except ValueError:
+                regime = MarketRegime.NORMAL
+            return ExecutionSimulatorV2.SLIPPAGE_BY_REGIME[regime]
+        return self._simulator._slippage_rate  # type: ignore[union-attr]
+
+    def _sim_execute(self, order: "Order", bar: pd.Series) -> "ExecutedOrder":
+        if self._is_v2():
+            return self._simulator.execute(order, bar, self._get_visible_1d_history())  # type: ignore[union-attr]
+        return self._simulator.execute(order, bar)
+
+    def _sim_execute_stop_tp(
+        self,
+        pos: Position,
+        bar: pd.Series,
+        label: str,
+        price: float,
+    ) -> "ExecutedOrder | None":
+        if self._is_v2():
+            return self._simulator.execute_stop_or_tp(  # type: ignore[union-attr]
+                pos, bar, label, price, self._get_visible_1d_history()
+            )
+        return self._simulator.execute_stop_or_tp(pos, bar, label, price)
 
     # ── Main loop ────────────────────────────────────────────────────────────
 
@@ -245,14 +296,16 @@ class BacktestEngine:
             qty = signal.quantity_btc
         else:
             open_price = float(bar["open"])
+            slip_rate = self._slippage_rate_for_sizing(bar, signal.side)
+            fee_rate = self._simulator._fee_rate  # type: ignore[union-attr]
             if signal.side == OrderSide.BUY:
-                est_exec = open_price * (1.0 + self._simulator._slippage_rate)
+                est_exec = open_price * (1.0 + slip_rate)
             else:
-                est_exec = open_price * (1.0 - self._simulator._slippage_rate)
+                est_exec = open_price * (1.0 - slip_rate)
             if est_exec <= 0:
                 return None
             # Use full quote, accounting for fees, so total cost == quote_amount_eur
-            qty = signal.quote_amount_eur / (est_exec * (1.0 + self._simulator._fee_rate))  # type: ignore[operator]
+            qty = signal.quote_amount_eur / (est_exec * (1.0 + fee_rate))  # type: ignore[operator]
 
         if qty <= 0:
             return None
@@ -266,7 +319,7 @@ class BacktestEngine:
             quantity_btc=qty,
             parent_signal_id=signal.signal_id,
         )
-        executed = self._simulator.execute(order, bar)
+        executed = self._sim_execute(order, bar)
 
         if signal.side == OrderSide.BUY:
             return self._apply_buy(signal, executed, pool)
@@ -373,21 +426,17 @@ class BacktestEngine:
 
             # Stop-loss check (closes entire remaining position)
             if pos.stop_loss_price is not None:
-                result = self._simulator.execute_stop_or_tp(
-                    pos, bar, "stop", pos.stop_loss_price
-                )
+                result = self._sim_execute_stop_tp(pos, bar, "stop", pos.stop_loss_price)
                 if result is not None:
                     self._close_position_from_exit(pos, result, pool, "stop_loss_hit")
                     continue  # position is gone; skip TP check
 
-            # Take-profit checks (V1: each TP closes the entire remaining position)
+            # Take-profit checks (each TP closes the entire remaining position)
             for i, tp in enumerate(pos.take_profit_levels):
                 if tp.executed:
                     continue
                 label = f"tp{i + 1}"
-                result = self._simulator.execute_stop_or_tp(
-                    pos, bar, label, tp.price
-                )
+                result = self._sim_execute_stop_tp(pos, bar, label, tp.price)
                 if result is not None:
                     self._close_position_from_exit(pos, result, pool, f"{label}_hit")
                     break  # position closed; stop iterating TPs
