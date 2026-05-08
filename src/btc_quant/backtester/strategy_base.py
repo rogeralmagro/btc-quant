@@ -74,6 +74,15 @@ class StrategyBase(ABC):
         """
         ...
 
+    def allows_position_accumulation(self) -> bool:
+        """True if strategy may send multiple BUYs into the same position (DCA).
+
+        False (default): engine rejects a second BUY while a position is open.
+        True: engine calls Position.add_to_position() to average down/up.
+        Override in strategies that implement DCA or pyramid-entry logic.
+        """
+        return False
+
     def _validate_config(self) -> None:
         """Hook for config validation. Called at the end of __init__.
 

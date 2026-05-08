@@ -7,7 +7,8 @@ from uuid import uuid4
 
 import pytest
 
-from btc_quant.backtester.models.enums import OrderSide, StrategyTag
+from btc_quant.backtester.models.enums import OrderSide, OrderStatus, OrderType, StrategyTag
+from btc_quant.backtester.models.order import ExecutedOrder, Order
 from btc_quant.backtester.models.position import Position, TakeProfitLevel
 
 UTC = timezone.utc
@@ -281,3 +282,95 @@ class TestReduceQuantity:
         p.reduce_quantity(0.05, LATER_TS)
         p.reduce_quantity(0.05, LATER_TS)
         assert p.quantity_btc == pytest.approx(0.1)
+
+
+# ---------------------------------------------------------------------------
+# add_to_position
+# ---------------------------------------------------------------------------
+
+
+def _buy_executed(price: float, qty: float, symbol: str = "BTCUSDT") -> ExecutedOrder:
+    order = Order(
+        order_id=__import__("uuid").uuid4(),
+        strategy_tag=StrategyTag.STRAT_07_TACTICAL,
+        timestamp_utc=OPEN_TS,
+        symbol=symbol,
+        side=OrderSide.BUY,
+        order_type=OrderType.MARKET,
+        quantity_btc=qty,
+    )
+    return ExecutedOrder(
+        order=order,
+        executed_at_utc=LATER_TS,
+        executed_price=price,
+        executed_quantity_btc=qty,
+        fees_eur=price * qty * 0.001,
+        slippage_eur=0.0,
+        status=OrderStatus.FILLED,
+    )
+
+
+class TestAddToPosition:
+    def test_weighted_average_price_recalculated(self) -> None:
+        p = _position(quantity_btc=1.0, entry_price_avg=40_000.0)
+        ex = _buy_executed(price=50_000.0, qty=1.0)
+        p.add_to_position(ex)
+        # avg = (1*40_000 + 1*50_000) / 2 = 45_000
+        assert p.entry_price_avg == pytest.approx(45_000.0)
+
+    def test_quantity_increased(self) -> None:
+        p = _position(quantity_btc=1.0, entry_price_avg=40_000.0)
+        ex = _buy_executed(price=50_000.0, qty=2.0)
+        p.add_to_position(ex)
+        assert p.quantity_btc == pytest.approx(3.0)
+
+    def test_fees_accumulated(self) -> None:
+        p = _position(quantity_btc=1.0, entry_price_avg=40_000.0, fees_paid_eur=10.0)
+        ex = _buy_executed(price=50_000.0, qty=1.0)  # fees = 50_000 * 1 * 0.001 = 50
+        p.add_to_position(ex)
+        assert p.fees_paid_eur == pytest.approx(60.0)
+
+    def test_entry_orders_appended(self) -> None:
+        p = _position()
+        assert len(p.entry_orders) == 0
+        ex = _buy_executed(price=45_000.0, qty=0.1)
+        p.add_to_position(ex)
+        assert len(p.entry_orders) == 1
+        assert p.entry_orders[0] is ex
+
+    def test_unequal_quantities_weighted_average(self) -> None:
+        # 2 BTC @ 40_000 + 1 BTC @ 46_000 → avg = (80_000 + 46_000) / 3 = 42_000
+        p = _position(quantity_btc=2.0, entry_price_avg=40_000.0)
+        ex = _buy_executed(price=46_000.0, qty=1.0)
+        p.add_to_position(ex)
+        assert p.entry_price_avg == pytest.approx(42_000.0)
+        assert p.quantity_btc == pytest.approx(3.0)
+
+    def test_sell_side_raises(self) -> None:
+        p = _position()
+        order = Order(
+            order_id=__import__("uuid").uuid4(),
+            strategy_tag=StrategyTag.STRAT_07_TACTICAL,
+            timestamp_utc=OPEN_TS,
+            symbol="BTCUSDT",
+            side=OrderSide.SELL,
+            order_type=OrderType.MARKET,
+            quantity_btc=0.1,
+        )
+        sell_ex = ExecutedOrder(
+            order=order,
+            executed_at_utc=LATER_TS,
+            executed_price=45_000.0,
+            executed_quantity_btc=0.1,
+            fees_eur=0.0,
+            slippage_eur=0.0,
+            status=OrderStatus.FILLED,
+        )
+        with pytest.raises(ValueError, match="BUY"):
+            p.add_to_position(sell_ex)
+
+    def test_symbol_mismatch_raises(self) -> None:
+        p = _position(symbol="BTCUSDT")
+        ex = _buy_executed(price=45_000.0, qty=0.1, symbol="ETHUSDT")
+        with pytest.raises(ValueError, match="Symbol mismatch"):
+            p.add_to_position(ex)

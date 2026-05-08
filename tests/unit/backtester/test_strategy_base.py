@@ -130,6 +130,20 @@ class TestValidateConfig:
         assert s.config["anything"] == "goes"
 
 
+class TestAllowsPositionAccumulation:
+    def test_default_returns_false(self) -> None:
+        s = _MockStrategy(TAG, {})
+        assert s.allows_position_accumulation() is False
+
+    def test_override_can_return_true(self) -> None:
+        class _AccumulatingStrategy(_MockStrategy):
+            def allows_position_accumulation(self) -> bool:
+                return True
+
+        s = _AccumulatingStrategy(TAG, {})
+        assert s.allows_position_accumulation() is True
+
+
 class TestRepr:
     def test_repr_contains_class_name(self) -> None:
         s = _MockStrategy(TAG, {})

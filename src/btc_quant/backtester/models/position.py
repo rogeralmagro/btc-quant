@@ -152,3 +152,30 @@ class Position:
                 f"{self.quantity_btc} BTC"
             )
         self.quantity_btc -= amount
+
+    # ── Accumulation ─────────────────────────────────────────────────────────
+
+    def add_to_position(self, executed_order: ExecutedOrder) -> None:
+        """Add a follow-on BUY execution. Recalculates the weighted-average entry price.
+
+        Raises:
+            ValueError: if executed_order.order.side is not BUY, or symbol mismatches.
+        """
+        if executed_order.order.side != OrderSide.BUY:
+            raise ValueError(
+                f"add_to_position requires a BUY order; "
+                f"got {executed_order.order.side!r}"
+            )
+        if executed_order.order.symbol != self.symbol:
+            raise ValueError(
+                f"Symbol mismatch: position is {self.symbol!r}, "
+                f"order is {executed_order.order.symbol!r}"
+            )
+        new_qty = executed_order.executed_quantity_btc
+        new_price = executed_order.executed_price
+        total_cost = self.quantity_btc * self.entry_price_avg + new_qty * new_price
+        new_total_qty = self.quantity_btc + new_qty
+        self.entry_price_avg = total_cost / new_total_qty
+        self.quantity_btc = new_total_qty
+        self.fees_paid_eur += executed_order.fees_eur
+        self.entry_orders.append(executed_order)
