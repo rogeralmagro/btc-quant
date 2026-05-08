@@ -119,6 +119,13 @@ class TestBuyAndHoldValidation:
 
         actual_btc_value = pool.btc_held * last_close
         diff_pct = abs(actual_btc_value - expected_btc_value) / expected_btc_value
+        print(
+    f"\nBAH final value diff: {diff_pct:.8%} | "
+    f"expected={expected_btc_value:.6f} | "
+    f"actual={actual_btc_value:.6f} | "
+    f"qty_expected={expected_qty:.10f} | "
+    f"qty_actual={pool.btc_held:.10f}"
+)
         assert diff_pct < 0.005, (
             f"Engine BTC value deviates {diff_pct:.4%} from expected. "
             f"Expected: {expected_btc_value:.2f} EUR, "
