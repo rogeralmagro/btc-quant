@@ -58,8 +58,10 @@ def _make_trade(
 def _make_snapshot(
     total_value: float,
     has_positions: bool = False,
-    ts: datetime = START,
+    ts: datetime | None = None,
 ) -> PortfolioSnapshot:
+    if ts is None:
+        ts = START
     return PortfolioSnapshot(
         timestamp_utc=ts,
         btc_price=10_000.0,
@@ -200,20 +202,93 @@ class TestCalculateMaxDrawdown:
 # ---------------------------------------------------------------------------
 
 
-class TestCalculateDrawdownDuration:
-    def test_duration_with_recovery(self) -> None:
-        # Peak at idx=1 (120), trough at idx=2 (90), recovery at idx=3 (130)
-        curve = [100.0, 120.0, 90.0, 130.0]
-        assert MetricsCalculator.calculate_drawdown_duration(curve) == 2  # 3-1
+def _ts(days_offset: int) -> datetime:
+    return START + timedelta(days=days_offset)
 
-    def test_duration_without_recovery(self) -> None:
-        # Peak at idx=1 (120), never recovers by end
+
+class TestCalculateDrawdownDuration:
+    def test_duration_with_recovery_calendar_days(self) -> None:
+        # Peak at day 1 (120), trough at day 2 (90), recovery at day 3 (130)
+        curve = [100.0, 120.0, 90.0, 130.0]
+        ts = [_ts(i) for i in range(4)]
+        assert MetricsCalculator.calculate_drawdown_duration(curve, ts) == 2  # day3 - day1
+
+    def test_duration_without_recovery_calendar_days(self) -> None:
+        # Peak at day 1 (120), never recovers by end (day 4)
         curve = [100.0, 120.0, 90.0, 100.0, 110.0]
-        # last bar at idx=4, duration = 4-1 = 3
-        assert MetricsCalculator.calculate_drawdown_duration(curve) == 3
+        ts = [_ts(i) for i in range(5)]
+        assert MetricsCalculator.calculate_drawdown_duration(curve, ts) == 3  # day4 - day1
 
     def test_duration_no_drawdown_is_zero(self) -> None:
-        assert MetricsCalculator.calculate_drawdown_duration([100.0, 110.0, 120.0]) == 0
+        curve = [100.0, 110.0, 120.0]
+        ts = [_ts(i) for i in range(3)]
+        assert MetricsCalculator.calculate_drawdown_duration(curve, ts) == 0
+
+    def test_duration_without_timestamps_returns_bars(self) -> None:
+        # Backwards compat: no timestamps → bar count
+        curve = [100.0, 120.0, 90.0, 130.0]
+        assert MetricsCalculator.calculate_drawdown_duration(curve) == 2
+
+    def test_duration_non_daily_timestamps(self) -> None:
+        # 4-hour bars: peak at 0h, recovery at 12h → 0 calendar days (same day)
+        from datetime import timedelta as td
+        base = START
+        curve = [100.0, 120.0, 90.0, 130.0]
+        ts = [base, base + td(hours=4), base + td(hours=8), base + td(hours=12)]
+        # (base+12h) - base = 0 days (timedelta.days = 0 for < 24h)
+        assert MetricsCalculator.calculate_drawdown_duration(curve, ts) == 0
+
+
+# ---------------------------------------------------------------------------
+# _calculate_average_recovery_time (private, tested via snapshots)
+# ---------------------------------------------------------------------------
+
+
+class TestAverageRecoveryTime:
+    def test_recovery_time_with_recovered_drawdowns(self) -> None:
+        """Drawdown from day 1 peak to day 3 recovery → 2 calendar days."""
+        snaps = [
+            _make_snapshot(100.0, ts=_ts(0)),
+            _make_snapshot(120.0, ts=_ts(1)),  # peak
+            _make_snapshot(90.0,  ts=_ts(2)),  # trough
+            _make_snapshot(130.0, ts=_ts(3)),  # recovery → duration = 3-1 = 2 days
+        ]
+        result = MetricsCalculator._calculate_average_recovery_time(snaps)
+        assert result == pytest.approx(2.0)
+
+    def test_recovery_time_with_only_unrecovered_returns_none(self) -> None:
+        """Drawdown never recovers → None (unrecovered drawdowns excluded)."""
+        snaps = [
+            _make_snapshot(100.0, ts=_ts(0)),
+            _make_snapshot(120.0, ts=_ts(1)),  # peak
+            _make_snapshot(90.0,  ts=_ts(2)),  # never recovers
+            _make_snapshot(100.0, ts=_ts(3)),  # still below 120
+        ]
+        assert MetricsCalculator._calculate_average_recovery_time(snaps) is None
+
+    def test_recovery_time_average_of_multiple(self) -> None:
+        """Two recovered drawdowns: (2 days + 4 days) / 2 = 3 days."""
+        snaps = [
+            _make_snapshot(100.0, ts=_ts(0)),
+            _make_snapshot(120.0, ts=_ts(1)),  # peak 1
+            _make_snapshot(90.0,  ts=_ts(2)),  # trough 1
+            _make_snapshot(130.0, ts=_ts(3)),  # recovery 1 → 2 days
+            _make_snapshot(150.0, ts=_ts(4)),  # new peak
+            _make_snapshot(100.0, ts=_ts(5)),  # trough 2
+            _make_snapshot(120.0, ts=_ts(6)),  # still in dd
+            _make_snapshot(140.0, ts=_ts(7)),  # still in dd
+            _make_snapshot(160.0, ts=_ts(8)),  # recovery 2 → 4 days (8-4)
+        ]
+        result = MetricsCalculator._calculate_average_recovery_time(snaps)
+        assert result == pytest.approx(3.0)  # (2 + 4) / 2
+
+    def test_recovery_time_no_drawdown_returns_none(self) -> None:
+        snaps = [
+            _make_snapshot(100.0, ts=_ts(0)),
+            _make_snapshot(110.0, ts=_ts(1)),
+            _make_snapshot(120.0, ts=_ts(2)),
+        ]
+        assert MetricsCalculator._calculate_average_recovery_time(snaps) is None
 
 
 # ---------------------------------------------------------------------------

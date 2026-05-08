@@ -20,6 +20,7 @@ class StrategyMetrics:
     avg_pnl_per_trade_eur: float | None  # None if no closed trades
     avg_r_multiple: float | None    # None if no trades with stop defined
     contribution_to_total_return_pct: float
+    time_in_market_pct: float       # fraction of bars where this strategy had >= 1 open position
 
 
 @dataclass(frozen=True)

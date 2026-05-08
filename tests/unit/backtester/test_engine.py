@@ -648,3 +648,48 @@ class TestStrategyAlignment:
         engine.run()
         # 4 weekly bars: strategy fires at most 4 times
         assert len(bar_count) <= 4
+
+
+# ---------------------------------------------------------------------------
+# PortfolioSnapshot.open_positions_by_strategy
+# ---------------------------------------------------------------------------
+
+
+class TestSnapshotOpenPositionsByStrategy:
+    def test_snapshot_tracks_positions_by_strategy(self) -> None:
+        """After a BUY, the snapshot must reflect open_positions_by_strategy for that tag."""
+        result = _engine(strategies=[_SingleBuyStrategy(TAG_07)], n=5, capital=100_000.0).run()
+        # BUY fires on bar 0, executes on bar 1; bars 1-4 snapshot have TAG_07 count=1
+        snapshots_with_position = [
+            s for s in result.equity_curve
+            if s.open_positions_by_strategy.get(TAG_07, 0) > 0
+        ]
+        assert len(snapshots_with_position) > 0
+
+    def test_snapshot_no_position_before_buy(self) -> None:
+        """Bar 0 snapshot: no position opened yet → TAG_07 count == 0."""
+        result = _engine(strategies=[_SingleBuyStrategy(TAG_07)], n=5, capital=100_000.0).run()
+        first_snap = result.equity_curve[0]
+        assert first_snap.open_positions_by_strategy.get(TAG_07, 0) == 0
+
+    def test_snapshot_two_strategies_tracked_independently(self) -> None:
+        """Two strategies: one buys, one doesn't → counts are independent."""
+        buyer = _SingleBuyStrategy(TAG_07)
+        idle = _NoSignalStrategy(TAG_06)
+        engine = BacktestEngine(
+            strategies=[buyer, idle],
+            data=_data(n=5),
+            initial_capital_per_strategy={TAG_07: 100_000.0, TAG_06: 5_000.0},
+            execution_simulator=_sim(),
+            profit_recycle_pct=0.0,
+        )
+        result = engine.run()
+        assert any(s.open_positions_by_strategy.get(TAG_07, 0) > 0 for s in result.equity_curve)
+        assert all(s.open_positions_by_strategy.get(TAG_06, 0) == 0 for s in result.equity_curve)
+
+    def test_open_positions_count_equals_sum_of_by_strategy(self) -> None:
+        """open_positions_count must equal sum(open_positions_by_strategy.values())."""
+        result = _engine(strategies=[_SingleBuyStrategy(TAG_07)], n=5, capital=100_000.0).run()
+        for snap in result.equity_curve:
+            total = sum(snap.open_positions_by_strategy.values())
+            assert snap.open_positions_count == total

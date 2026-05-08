@@ -29,6 +29,7 @@ def _minimal_strategy_metrics(**overrides) -> StrategyMetrics:
         "avg_pnl_per_trade_eur": None,
         "avg_r_multiple": None,
         "contribution_to_total_return_pct": 0.0,
+        "time_in_market_pct": 0.0,
     }
     defaults.update(overrides)
     return StrategyMetrics(**defaults)
