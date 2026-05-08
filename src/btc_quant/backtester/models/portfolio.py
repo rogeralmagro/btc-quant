@@ -119,6 +119,10 @@ class Portfolio:
 
     def snapshot(self, timestamp_utc: datetime, btc_price: float) -> PortfolioSnapshot:
         """Capture an immutable point-in-time snapshot for the equity curve."""
+        by_strategy = {
+            tag: sum(1 for p in self.open_positions.values() if p.strategy_tag == tag)
+            for tag in self.pools.keys()
+        }
         return PortfolioSnapshot(
             timestamp_utc=timestamp_utc,
             btc_price=btc_price,
@@ -127,6 +131,7 @@ class Portfolio:
             cash_by_pool={tag: pool.cash_eur for tag, pool in self.pools.items()},
             btc_by_pool={tag: pool.btc_held for tag, pool in self.pools.items()},
             open_positions_count=len(self.open_positions),
+            open_positions_by_strategy=by_strategy,
         )
 
 
@@ -145,4 +150,5 @@ class PortfolioSnapshot:
     total_btc: float
     cash_by_pool: dict[StrategyTag, float]
     btc_by_pool: dict[StrategyTag, float]
-    open_positions_count: int
+    open_positions_count: int  # sum of open_positions_by_strategy.values() — kept for compat
+    open_positions_by_strategy: dict[StrategyTag, int] = field(default_factory=dict)
