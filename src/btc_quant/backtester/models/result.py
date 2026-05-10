@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
+from btc_quant.backtester.inflow_scheduler import CapitalInflow
 from btc_quant.backtester.models.enums import CircuitBreakerState, StrategyTag
 from btc_quant.backtester.models.portfolio import Portfolio, PortfolioSnapshot
 from btc_quant.backtester.models.trade import Trade
@@ -65,6 +66,9 @@ class BacktestResult:
     # Circuit breaker events (empty if none triggered):
     circuit_breaker_events: list[CircuitBreakerEvent] = field(default_factory=list)
 
+    # Capital inflows processed during this run (empty if no inflow_schedule):
+    processed_inflows: list[CapitalInflow] = field(default_factory=list)
+
     # Metadata:
     backtest_metadata: dict[str, Any] = field(default_factory=dict)
     # e.g. {"engine_version": "0.1", "execution_model": "open_next_bar",
@@ -80,9 +84,9 @@ class BacktestResult:
                 f"start_date_utc ({self.start_date_utc})"
             )
 
-        if self.initial_capital_eur <= 0:
+        if self.initial_capital_eur < 0:
             raise ValueError(
-                f"initial_capital_eur must be > 0, got {self.initial_capital_eur}"
+                f"initial_capital_eur must be >= 0, got {self.initial_capital_eur}"
             )
 
         total_by_strategy = sum(

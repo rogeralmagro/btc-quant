@@ -9,6 +9,7 @@ from uuid import UUID, uuid4
 import pandas as pd
 
 from btc_quant.backtester.execution_simulator import ExecutionSimulator, ExecutionSimulatorV2
+from btc_quant.backtester.inflow_scheduler import CapitalInflow
 from btc_quant.backtester.market_context import MarketContext
 from btc_quant.backtester.models.enums import OrderSide, OrderType, StrategyTag
 from btc_quant.backtester.models.order import ExecutedOrder, make_order
@@ -95,6 +96,7 @@ class BacktestEngine:
         execution_simulator: ExecutionSimulator,
         profit_recycle_pct: float = 0.5,
         symbol: str = "BTCUSDT",
+        inflow_schedule: list[CapitalInflow] | None = None,
     ) -> None:
         if not strategies:
             raise ValueError("strategies must not be empty")
@@ -119,9 +121,9 @@ class BacktestEngine:
                 raise ValueError(
                     f"No initial capital specified for strategy {tag!r}"
                 )
-            if initial_capital_per_strategy[tag] <= 0:
+            if initial_capital_per_strategy[tag] < 0:
                 raise ValueError(
-                    f"initial_capital for {tag!r} must be > 0, "
+                    f"initial_capital for {tag!r} must be >= 0, "
                     f"got {initial_capital_per_strategy[tag]}"
                 )
 
@@ -161,6 +163,21 @@ class BacktestEngine:
         }
         self._portfolio = Portfolio(pools=pools)
         self._initial_capital = sum(initial_capital_per_strategy[t] for t in strategy_tags)
+
+        # Inflow schedule: sorted ascending so we can pop from the front cheaply.
+        # Validate all targets have registered pools.
+        if inflow_schedule:
+            for inflow in inflow_schedule:
+                if inflow.target_strategy not in self._portfolio.pools:
+                    raise ValueError(
+                        f"Inflow targets strategy {inflow.target_strategy!r} "
+                        "which has no registered pool. Add it to strategies and "
+                        "initial_capital_per_strategy."
+                    )
+        self._pending_inflows: list[CapitalInflow] = sorted(
+            inflow_schedule or [], key=lambda x: x.timestamp_utc
+        )
+        self._processed_inflows: list[CapitalInflow] = []
 
         # Precompute iteration TF and alignment sets
         self._iteration_tf = self._determine_iteration_tf()
@@ -251,6 +268,15 @@ class BacktestEngine:
 
             # 1. Advance market context
             self._market_context.advance_to(bar_close_time)
+
+            # 1b. Process inflows whose timestamp has arrived (≤ bar close time).
+            #     Capital is added here so strategies can see it when generating
+            #     signals in step 4, and trades execute at the next bar's open.
+            while self._pending_inflows and self._pending_inflows[0].timestamp_utc <= bar_close_time:
+                inflow = self._pending_inflows.pop(0)
+                pool = self._portfolio.get_pool(inflow.target_strategy)
+                pool.add_cash(inflow.amount_eur, source="inflow")
+                self._processed_inflows.append(inflow)
 
             # 2. Execute pending signals from previous bar at this bar's open
             newly_opened: set[UUID] = set()
@@ -497,6 +523,7 @@ class BacktestEngine:
             equity_curve=list(self._equity_curve),
             closed_trades=closed_trades,
             trades_by_strategy=trades_by_strategy,
+            processed_inflows=list(self._processed_inflows),
             backtest_metadata={
                 "iteration_tf": self._iteration_tf,
                 "symbol": self._symbol,

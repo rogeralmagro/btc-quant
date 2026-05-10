@@ -275,16 +275,29 @@ class TestEngineCreationValidation:
                 profit_recycle_pct=0.0,
             )
 
-    def test_zero_capital_raises(self) -> None:
+    def test_negative_capital_raises(self) -> None:
         strat = _NoSignalStrategy(tag=TAG_07)
-        with pytest.raises(ValueError, match="must be > 0"):
+        with pytest.raises(ValueError, match="must be >= 0"):
             BacktestEngine(
                 strategies=[strat],
                 data=_data(),
-                initial_capital_per_strategy={TAG_07: 0.0},
+                initial_capital_per_strategy={TAG_07: -1.0},
                 execution_simulator=_sim(),
                 profit_recycle_pct=0.0,
             )
+
+    def test_zero_capital_is_allowed(self) -> None:
+        """A pool starting at 0 EUR is valid — capital arrives via inflow schedule."""
+        strat = _NoSignalStrategy(tag=TAG_07)
+        engine = BacktestEngine(
+            strategies=[strat],
+            data=_data(),
+            initial_capital_per_strategy={TAG_07: 0.0},
+            execution_simulator=_sim(),
+            profit_recycle_pct=0.0,
+        )
+        result = engine.run()
+        assert result.equity_curve[-1].total_value_eur == pytest.approx(0.0)
 
     def test_invalid_profit_recycle_pct_raises(self) -> None:
         strat = _NoSignalStrategy(tag=TAG_07)

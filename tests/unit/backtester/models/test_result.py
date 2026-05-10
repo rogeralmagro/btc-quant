@@ -231,12 +231,13 @@ class TestBacktestResultValidation:
         with pytest.raises(ValueError, match="end_date_utc"):
             _result(start_date_utc=END, end_date_utc=START)
 
-    def test_zero_capital_raises(self) -> None:
-        with pytest.raises(ValueError, match="initial_capital_eur must be > 0"):
-            _result(initial_capital_eur=0.0)
+    def test_zero_capital_is_valid(self) -> None:
+        """Zero initial capital is allowed for inflow-funded pools."""
+        r = _result(initial_capital_eur=0.0)
+        assert r.initial_capital_eur == 0.0
 
     def test_negative_capital_raises(self) -> None:
-        with pytest.raises(ValueError, match="initial_capital_eur must be > 0"):
+        with pytest.raises(ValueError, match="must be >= 0"):
             _result(initial_capital_eur=-500.0)
 
     def test_backtest_result_immutable(self) -> None:
