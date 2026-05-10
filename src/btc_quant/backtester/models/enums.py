@@ -38,8 +38,8 @@ class StrategyTag(str, Enum):
     """Canonical strategy IDs. Centralised to prevent typos across the system."""
 
     STRAT_06_BASELINE = "strat06_baseline"
-    STRAT_06_MODULATION = "strat06_modulation"
-    STRAT_06_DEEP_VALUE = "strat06_deep_value"
+    STRAT_06_BUFFER = "strat06_buffer"
+    STRAT_06_RESERVE = "strat06_reserve"
     STRAT_07_TACTICAL = "strat07_tactical"
     DCA_BENCHMARK = "dca_benchmark"
     BUY_AND_HOLD_BENCHMARK = "buy_and_hold_benchmark"
