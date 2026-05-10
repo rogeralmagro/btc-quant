@@ -304,8 +304,14 @@ class BacktestEngine:
                 est_exec = open_price * (1.0 - slip_rate)
             if est_exec <= 0:
                 return None
-            # Use full quote, accounting for fees, so total cost == quote_amount_eur
-            qty = signal.quote_amount_eur / (est_exec * (1.0 + fee_rate))  # type: ignore[operator]
+            # SAFETY_FACTOR guards against float64 rounding causing notional+fees
+            # to exceed available cash by a sub-cent amount (e.g. 10000.0000000001).
+            _SAFETY_FACTOR = 0.999
+            safe_quote = min(
+                signal.quote_amount_eur,  # type: ignore[operator]
+                pool.cash_eur * _SAFETY_FACTOR,
+            )
+            qty = safe_quote / (est_exec * (1.0 + fee_rate))
 
         if qty <= 0:
             return None

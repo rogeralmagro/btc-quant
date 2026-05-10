@@ -693,3 +693,61 @@ class TestSnapshotOpenPositionsByStrategy:
         for snap in result.equity_curve:
             total = sum(snap.open_positions_by_strategy.values())
             assert snap.open_positions_count == total
+
+
+# ---------------------------------------------------------------------------
+# Full-cash buy: no float64 overdraft
+# ---------------------------------------------------------------------------
+
+
+class _FullCashBuyStrategy(StrategyBase):
+    """Sends one BUY with quote_amount_eur = entire pool cash on first bar."""
+
+    def __init__(self, tag: StrategyTag = TAG_BAH) -> None:
+        super().__init__(tag, {})
+        self._done = False
+
+    def required_timeframes(self) -> list[str]:
+        return ["1d"]
+
+    def primary_timeframe(self) -> str:
+        return "1d"
+
+    def generate_signals(self, context: MarketContext, portfolio: Portfolio) -> list[Signal]:
+        if self._done:
+            return []
+        self._done = True
+        pool = portfolio.get_pool(self.strategy_tag)
+        return [Signal(
+            strategy_tag=self.strategy_tag,
+            timestamp_utc=context.current_time,
+            side=OrderSide.BUY,
+            symbol=context.symbol,
+            quote_amount_eur=pool.cash_eur,
+        )]
+
+
+class TestFullCashBuyNoOverdraft:
+    def test_signal_with_full_cash_does_not_overdraft(self) -> None:
+        """Engine must not raise overdraft when strategy spends entire pool cash.
+
+        The SAFETY_FACTOR=0.999 in _execute_signal prevents float64 rounding
+        from causing notional+fees to exceed available cash by a sub-cent amount.
+        After the buy, cash must be > 0 (small residual from the safety margin).
+        """
+        strategy = _FullCashBuyStrategy(TAG_BAH)
+        engine = BacktestEngine(
+            strategies=[strategy],
+            data=_data(n=5),
+            initial_capital_per_strategy={TAG_BAH: 10_000.0},
+            execution_simulator=ExecutionSimulator(fee_rate=0.001, slippage_rate=0.0005),
+            profit_recycle_pct=0.0,
+        )
+        result = engine.run()  # must not raise
+
+        # After the buy executes (bar 1), total portfolio value must be positive
+        snap_after_buy = result.equity_curve[1]
+        assert snap_after_buy.total_value_eur > 0
+        # The residual cash comes from SAFETY_FACTOR: at most 0.1% of capital
+        cash_residual = snap_after_buy.cash_by_pool.get(TAG_BAH, 0.0)
+        assert 0.0 < cash_residual < 10_000.0 * 0.001 + 1.0  # < ~11 EUR
