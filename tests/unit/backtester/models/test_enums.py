@@ -66,6 +66,8 @@ class TestEnumValuesAreStrings:
 
     def test_strategy_tag_values(self) -> None:
         assert StrategyTag.STRAT_06_BASELINE == "strat06_baseline"
+        assert StrategyTag.STRAT_06_BUFFER == "strat06_buffer"
+        assert StrategyTag.STRAT_06_RESERVE == "strat06_reserve"
         assert StrategyTag.STRAT_07_TACTICAL == "strat07_tactical"
         assert StrategyTag.DCA_BENCHMARK == "dca_benchmark"
         assert StrategyTag.BUY_AND_HOLD_BENCHMARK == "buy_and_hold_benchmark"
