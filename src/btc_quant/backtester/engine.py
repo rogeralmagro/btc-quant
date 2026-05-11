@@ -114,9 +114,16 @@ class BacktestEngine:
                         f"but it is not in data. Available: {sorted(data)}"
                     )
 
-        # Validate capital
+        # Validate capital — strategy tags + any auxiliary pools declared by strategies
         strategy_tags = [s.strategy_tag for s in strategies]
-        for tag in strategy_tags:
+        auxiliary_tags: list[StrategyTag] = []
+        for s in strategies:
+            for t in s.additional_pool_tags():
+                if t not in strategy_tags and t not in auxiliary_tags:
+                    auxiliary_tags.append(t)
+        all_pool_tags = strategy_tags + auxiliary_tags
+
+        for tag in all_pool_tags:
             if tag not in initial_capital_per_strategy:
                 raise ValueError(
                     f"No initial capital specified for strategy {tag!r}"
@@ -152,17 +159,17 @@ class BacktestEngine:
         self._profit_recycle_pct = profit_recycle_pct
         self._symbol = symbol
 
-        # Build portfolio
+        # Build portfolio (strategy pools + auxiliary pools declared by strategies)
         pools = {
             tag: CapitalPool(
                 strategy_tag=tag,
                 cash_eur=initial_capital_per_strategy[tag],
                 total_invested_eur=initial_capital_per_strategy[tag],
             )
-            for tag in strategy_tags
+            for tag in all_pool_tags
         }
         self._portfolio = Portfolio(pools=pools)
-        self._initial_capital = sum(initial_capital_per_strategy[t] for t in strategy_tags)
+        self._initial_capital = sum(initial_capital_per_strategy[t] for t in all_pool_tags)
 
         # Inflow schedule: sorted ascending so we can pop from the front cheaply.
         # Validate all targets have registered pools.

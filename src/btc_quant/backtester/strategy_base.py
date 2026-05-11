@@ -74,6 +74,15 @@ class StrategyBase(ABC):
         """
         ...
 
+    def additional_pool_tags(self) -> list[StrategyTag]:
+        """Extra StrategyTag pools this strategy needs beyond its own strategy_tag.
+
+        The engine creates a CapitalPool for each returned tag and looks up its
+        initial balance in initial_capital_per_strategy. Override for multi-pool
+        strategies (e.g. STRAT-06 needs BUFFER and RESERVE pools alongside BASELINE).
+        """
+        return []
+
     def allows_position_accumulation(self) -> bool:
         """True if strategy may send multiple BUYs into the same position (DCA).
 

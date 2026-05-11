@@ -75,6 +75,9 @@ class DCAModulatedStrategy(StrategyBase):
     def primary_timeframe(self) -> str:
         return "1d"
 
+    def additional_pool_tags(self) -> list[StrategyTag]:
+        return [_BUFFER, _RESERVE]
+
     def allows_position_accumulation(self) -> bool:
         return True
 
