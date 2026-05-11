@@ -3,6 +3,27 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from enum import Enum
+
+
+class BaselineExecutionMode(str, Enum):
+    """Controls when the weekly baseline DCA fires relative to bar time.
+
+    WEEKLY (default):
+        Fires once per ISO week on the configured weekday, at any hour.
+        Appropriate for backtests and live systems where the relevant
+        granularity is the daily bar (``context.current_time`` is the
+        bar close, e.g. 23:59:59.999 for 1D data).
+
+    WEEKLY_AT_HOUR:
+        Fires once per ISO week on the configured weekday AND only when
+        ``context.current_time.hour`` matches ``baseline_hour_utc``.
+        Appropriate for live systems with intra-day data where the exact
+        execution time within the day matters.
+    """
+
+    WEEKLY = "weekly"
+    WEEKLY_AT_HOUR = "weekly_at_hour"
 
 
 @dataclass(frozen=True)
@@ -28,8 +49,9 @@ class DCAModulatedConfig:
     reserve_pct: float = 0.25
 
     # Baseline DCA execution schedule:
+    baseline_execution_mode: BaselineExecutionMode = BaselineExecutionMode.WEEKLY
     baseline_weekday: int = 0       # 0 = Monday (Python weekday())
-    baseline_hour_utc: int = 12     # 12:00 UTC
+    baseline_hour_utc: int = 12     # 12:00 UTC — only used in WEEKLY_AT_HOUR mode
 
     # Reserve parameters:
     reserve_cap_months: int = 12

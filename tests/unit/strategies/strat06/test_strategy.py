@@ -7,7 +7,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from btc_quant.backtester.models.enums import StrategyTag
-from btc_quant.strategies.strat06.config import DCAModulatedConfig
+from btc_quant.strategies.strat06.config import BaselineExecutionMode, DCAModulatedConfig
 from btc_quant.strategies.strat06.strategy import DCAModulatedStrategy
 
 UTC = timezone.utc
@@ -83,9 +83,13 @@ class TestBaselineExecution:
         assert signals[0].strategy_tag == StrategyTag.STRAT_06_BASELINE
 
     def test_no_baseline_buy_outside_target_hour(
-        self, mock_context_factory, mock_portfolio_factory, default_config
+        self, mock_context_factory, mock_portfolio_factory
     ) -> None:
-        strat = _strat(default_config)
+        cfg = DCAModulatedConfig(
+            monthly_inflow_eur=500.0,
+            baseline_execution_mode=BaselineExecutionMode.WEEKLY_AT_HOUR,
+        )
+        strat = _strat(cfg)
         for hour in (11, 13):
             ts = datetime(2024, 1, 8, hour, 0, tzinfo=UTC)
             ctx = mock_context_factory(ts, 50_000.0)
@@ -536,3 +540,64 @@ class TestEdgeCases:
         assert len(signals) == 1
         assert signals[0].metadata["multiplier"] == pytest.approx(2.5)
         assert signals[0].quote_amount_eur == pytest.approx(68.75 * 2.5)
+
+
+# ── Baseline execution mode ───────────────────────────────────────────────────
+
+
+class TestBaselineExecutionMode:
+    def test_default_mode_is_weekly(self, default_config) -> None:
+        assert default_config.baseline_execution_mode == BaselineExecutionMode.WEEKLY
+
+    def test_weekly_mode_triggers_on_weekday_any_hour(
+        self, mock_context_factory, mock_portfolio_factory
+    ) -> None:
+        cfg = DCAModulatedConfig(
+            monthly_inflow_eur=500.0,
+            baseline_execution_mode=BaselineExecutionMode.WEEKLY,
+            baseline_weekday=0,
+        )
+        strat = _strat(cfg)
+
+        # Monday at 23:59:59 (daily bar close) — should fire
+        ts_close = datetime(2024, 1, 8, 23, 59, 59, tzinfo=UTC)
+        port = mock_portfolio_factory(baseline_cash=200.0)
+        signals = strat.generate_signals(mock_context_factory(ts_close, 50_000.0), port)
+        assert len(signals) == 1, "WEEKLY mode should fire at Monday bar close (23:59)"
+
+        # Same ISO week, Monday again at 12:00 — must NOT fire twice
+        ts_noon = datetime(2024, 1, 8, 12, 0, tzinfo=UTC)
+        port2 = mock_portfolio_factory(baseline_cash=200.0)
+        signals2 = strat.generate_signals(mock_context_factory(ts_noon, 50_000.0), port2)
+        assert signals2 == [], "WEEKLY mode must not fire twice in same ISO week"
+
+        # Next Monday at 23:59:59 — fires again
+        ts_next = datetime(2024, 1, 15, 23, 59, 59, tzinfo=UTC)
+        port3 = mock_portfolio_factory(baseline_cash=200.0)
+        signals3 = strat.generate_signals(mock_context_factory(ts_next, 50_000.0), port3)
+        assert len(signals3) == 1, "WEEKLY mode should fire again next ISO week"
+
+    def test_weekly_at_hour_mode_requires_exact_hour(
+        self, mock_context_factory, mock_portfolio_factory
+    ) -> None:
+        cfg = DCAModulatedConfig(
+            monthly_inflow_eur=500.0,
+            baseline_execution_mode=BaselineExecutionMode.WEEKLY_AT_HOUR,
+            baseline_weekday=0,
+            baseline_hour_utc=12,
+        )
+        strat = _strat(cfg)
+        port = mock_portfolio_factory(baseline_cash=200.0)
+
+        # Monday at 11:00 — no fire
+        ts_early = datetime(2024, 1, 8, 11, 0, tzinfo=UTC)
+        assert strat.generate_signals(mock_context_factory(ts_early, 50_000.0), port) == []
+
+        # Monday at 12:00 — fires
+        ts_exact = datetime(2024, 1, 8, 12, 0, tzinfo=UTC)
+        signals = strat.generate_signals(mock_context_factory(ts_exact, 50_000.0), port)
+        assert len(signals) == 1
+
+        # Monday at 13:00 — no fire (same ISO week already consumed)
+        ts_late = datetime(2024, 1, 8, 13, 0, tzinfo=UTC)
+        assert strat.generate_signals(mock_context_factory(ts_late, 50_000.0), port) == []

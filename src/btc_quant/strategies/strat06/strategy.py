@@ -10,7 +10,7 @@ from btc_quant.backtester.models.portfolio import Portfolio
 from btc_quant.backtester.models.signal import Signal
 from btc_quant.backtester.strategy_base import StrategyBase
 from btc_quant.strategies.strat06.ath_tracker import ATHTracker
-from btc_quant.strategies.strat06.config import DCAModulatedConfig
+from btc_quant.strategies.strat06.config import BaselineExecutionMode, DCAModulatedConfig
 from btc_quant.strategies.strat06.drawdown_multiplier import DrawdownMultiplier
 from btc_quant.strategies.strat06.reserve_manager import ReserveManager
 
@@ -245,8 +245,9 @@ class DCAModulatedStrategy(StrategyBase):
     def _is_baseline_time(self, current_time: datetime) -> bool:
         if current_time.weekday() != self._config.baseline_weekday:
             return False
-        if current_time.hour != self._config.baseline_hour_utc:
-            return False
+        if self._config.baseline_execution_mode == BaselineExecutionMode.WEEKLY_AT_HOUR:
+            if current_time.hour != self._config.baseline_hour_utc:
+                return False
         iso_year, iso_week, _ = current_time.isocalendar()
         if self._last_baseline_buy_week == (iso_year, iso_week):
             return False

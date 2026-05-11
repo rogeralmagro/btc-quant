@@ -6,7 +6,7 @@ from dataclasses import FrozenInstanceError
 
 import pytest
 
-from btc_quant.strategies.strat06.config import DCAModulatedConfig
+from btc_quant.strategies.strat06.config import BaselineExecutionMode, DCAModulatedConfig
 
 
 def _cfg(**overrides) -> DCAModulatedConfig:
@@ -22,6 +22,7 @@ class TestDCAModulatedConfigValid:
         assert cfg.baseline_pct == 0.55
         assert cfg.buffer_pct == 0.20
         assert cfg.reserve_pct == 0.25
+        assert cfg.baseline_execution_mode == BaselineExecutionMode.WEEKLY
         assert cfg.baseline_weekday == 0
         assert cfg.baseline_hour_utc == 12
         assert cfg.reserve_cap_months == 12
