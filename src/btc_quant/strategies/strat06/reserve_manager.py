@@ -225,6 +225,7 @@ class ReserveManager:
         current_drawdown: float,
         current_btc_price: float,
         current_timestamp: datetime,
+        current_balance_eur: float | None = None,
     ) -> ReserveDeployment | None:
         """Evaluate whether a tranche should deploy now.
 
@@ -240,6 +241,11 @@ class ReserveManager:
             current_drawdown: current drawdown (non-positive fraction).
             current_btc_price: BTC price now (used only for the audit record).
             current_timestamp: UTC timestamp of this evaluation.
+            current_balance_eur: if provided, overrides the internal
+                _current_balance_eur for this evaluation. Use when the
+                Portfolio is the source of truth for cash (the internal
+                balance is not updated). If None, uses internal balance
+                (backward-compatible path).
 
         Returns:
             ReserveDeployment if a tranche fires, None otherwise.
@@ -255,7 +261,13 @@ class ReserveManager:
             raise ValueError(
                 f"current_btc_price must be > 0, got {current_btc_price}"
             )
-        if self._current_balance_eur <= 0:
+
+        balance = (
+            current_balance_eur
+            if current_balance_eur is not None
+            else self._current_balance_eur
+        )
+        if balance <= 0:
             return None
 
         # Check from deepest to least negative so the most extreme fires first.
@@ -272,8 +284,10 @@ class ReserveManager:
                 continue
 
             # This tranche qualifies — deploy it.
-            amount = self._current_balance_eur * tranche.deploy_pct
-            self._current_balance_eur -= amount
+            amount = balance * tranche.deploy_pct
+            if current_balance_eur is None:
+                # Internal-balance path: update internal state.
+                self._current_balance_eur -= amount
             self._tranches_deployed_this_cycle.add(i)
 
             return ReserveDeployment(

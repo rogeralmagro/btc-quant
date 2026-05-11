@@ -255,6 +255,36 @@ class TestReserveManagerRecordDrawdown:
 # Integration: full cycle simulation
 # ---------------------------------------------------------------------------
 
+class TestEvaluateDeploymentExternalBalance:
+    def test_evaluate_deployment_with_external_balance_overrides_internal(self) -> None:
+        rm = ReserveManager(reserve_cap_eur=2_000.0, persistence_days=3)
+        rm.add_inflow(1_000.0)  # internal balance = 1000
+        _record_days(rm, -0.55, n_days=3)
+        # Pass external balance=500; amount should be 500 * 0.20 = 100
+        result = rm.evaluate_deployment(-0.55, PRICE, _ts(3), current_balance_eur=500.0)
+        assert result is not None
+        assert result.amount_deployed_eur == pytest.approx(100.0)  # 20% of 500
+        # Internal balance must NOT have been debited
+        assert rm.current_balance_eur == pytest.approx(1_000.0)
+
+    def test_evaluate_deployment_without_external_balance_uses_internal(self) -> None:
+        rm = ReserveManager(reserve_cap_eur=2_000.0, persistence_days=3)
+        rm.add_inflow(1_000.0)
+        _record_days(rm, -0.55, n_days=3)
+        result = rm.evaluate_deployment(-0.55, PRICE, _ts(3))
+        assert result is not None
+        assert result.amount_deployed_eur == pytest.approx(200.0)  # 20% of 1000
+        # Internal balance IS debited on the backward-compat path
+        assert rm.current_balance_eur == pytest.approx(800.0)
+
+    def test_external_balance_zero_no_deployment(self) -> None:
+        rm = ReserveManager(reserve_cap_eur=2_000.0, persistence_days=3)
+        rm.add_inflow(1_000.0)
+        _record_days(rm, -0.55, n_days=3)
+        result = rm.evaluate_deployment(-0.55, PRICE, _ts(3), current_balance_eur=0.0)
+        assert result is None
+
+
 class TestReserveManagerFullCycle:
     def test_full_cycle_simulation(self) -> None:
         """Inflow fills reserve; sequential tranche deployments in a bear cycle."""
