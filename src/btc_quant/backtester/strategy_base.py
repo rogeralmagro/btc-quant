@@ -28,6 +28,14 @@ class StrategyBase(ABC):
     - Implement generate_signals(context, portfolio) -> list[Signal]
     - Declare required_timeframes() -> list[str]
     - Declare primary_timeframe() -> str
+    - Override additional_pool_tags() -> list[StrategyTag] if the strategy
+      needs auxiliary capital pools beyond the one tied to strategy_tag.
+      Default returns []. The engine creates a CapitalPool for each returned
+      tag at construction (initial balances must be in
+      initial_capital_per_strategy). Do NOT include strategy_tag itself —
+      that pool is always created automatically.
+      Example: STRAT-06 runs 3 pools (BASELINE, BUFFER, RESERVE) and
+      declares [STRAT_06_BUFFER, STRAT_06_RESERVE] here.
     """
 
     def __init__(self, strategy_tag: StrategyTag, config: dict[str, Any]) -> None:
