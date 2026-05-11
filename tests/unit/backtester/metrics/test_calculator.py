@@ -143,6 +143,25 @@ class TestCalculateReturns:
         returns = MetricsCalculator.calculate_returns([1.0, 2.0, 3.0, 4.0])
         assert len(returns) == 3
 
+    def test_returns_handles_leading_zeros(self) -> None:
+        returns = MetricsCalculator.calculate_returns([0.0, 0.0, 100.0, 110.0, 99.0])
+        assert len(returns) == 2
+        assert returns[0] == pytest.approx(0.10)
+        assert returns[1] == pytest.approx(-11.0 / 110.0)
+
+    def test_returns_all_zeros_returns_empty(self) -> None:
+        returns = MetricsCalculator.calculate_returns([0.0, 0.0, 0.0])
+        assert len(returns) == 0
+
+    def test_returns_single_nonzero_returns_empty(self) -> None:
+        returns = MetricsCalculator.calculate_returns([0.0, 0.0, 100.0])
+        assert len(returns) == 0
+
+    def test_returns_normal_curve_unchanged(self) -> None:
+        returns = MetricsCalculator.calculate_returns([100.0, 110.0, 99.0])
+        assert returns[0] == pytest.approx(0.1)
+        assert returns[1] == pytest.approx(-11.0 / 110.0)
+
 
 # ---------------------------------------------------------------------------
 # calculate_cagr

@@ -226,11 +226,27 @@ class MetricsCalculator:
 
     @staticmethod
     def calculate_returns(equity_curve: list[float]) -> np.ndarray:
-        """Period-over-period returns: (v[i] - v[i-1]) / v[i-1]."""
-        if len(equity_curve) < 2:
+        """Period-over-period returns as numpy array.
+
+        Leading zeros (e.g. when a strategy starts with zero capital and
+        the first inflow hasn't arrived yet) are skipped. Returns are
+        computed from the first bar where equity > 0.
+
+        Examples:
+            [0.0, 0.0, 100.0, 110.0, 99.0] → [0.10, -0.10]
+            [0.0, 0.0, 0.0]                 → []  (all zeros)
+            [0.0, 100.0]                    → []  (only one nonzero)
+            [100.0, 110.0, 99.0]            → [0.10, -0.10]
+        """
+        values = np.asarray(equity_curve, dtype=float)
+        nonzero_mask = values > 0
+        if not nonzero_mask.any():
             return np.array([], dtype=float)
-        values = np.array(equity_curve, dtype=float)
-        return np.diff(values) / values[:-1]
+        first_nonzero_idx = int(nonzero_mask.argmax())
+        if len(values) - first_nonzero_idx < 2:
+            return np.array([], dtype=float)
+        tail = values[first_nonzero_idx:]
+        return np.diff(tail) / tail[:-1]
 
     @staticmethod
     def calculate_cagr(
