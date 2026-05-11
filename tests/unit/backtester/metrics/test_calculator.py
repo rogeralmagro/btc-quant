@@ -8,6 +8,7 @@ from uuid import uuid4
 import numpy as np
 import pytest
 
+from btc_quant.backtester.inflow_scheduler import CapitalInflow
 from btc_quant.backtester.metrics.calculator import MetricsCalculator
 from btc_quant.backtester.models.enums import OrderSide, StrategyTag, TradeOutcome
 from btc_quant.backtester.models.pool import CapitalPool
@@ -73,6 +74,14 @@ def _make_snapshot(
     )
 
 
+def _make_inflow(amount: float, day_offset: int = 0) -> CapitalInflow:
+    return CapitalInflow(
+        timestamp_utc=START + timedelta(days=day_offset),
+        amount_eur=amount,
+        target_strategy=TAG,
+    )
+
+
 def _make_result(
     equity_values: list[float],
     start: datetime = START,
@@ -80,6 +89,7 @@ def _make_result(
     initial_capital: float = 10_000.0,
     trades: list[Trade] | None = None,
     has_positions: list[bool] | None = None,
+    processed_inflows: list[CapitalInflow] | None = None,
 ) -> BacktestResult:
     end = start + timedelta(days=days)
     if trades is None:
@@ -105,6 +115,7 @@ def _make_result(
         equity_curve=snapshots,
         closed_trades=trades,
         trades_by_strategy={TAG: list(trades)},
+        processed_inflows=processed_inflows or [],
     )
 
 
@@ -606,6 +617,24 @@ class TestCalculateMain:
         metrics = MetricsCalculator().calculate(result)
         assert metrics.cagr is None
 
+    def test_calculate_cagr_computed_for_lump_sum_no_inflows(self) -> None:
+        """CAGR is computed when initial > 0 and no inflows (lump-sum case)."""
+        result = _make_result([10_000.0, 20_000.0], days=365)
+        metrics = MetricsCalculator().calculate(result)
+        assert metrics.cagr == pytest.approx(1.0)  # 100% CAGR over 1 year
+
+    def test_calculate_cagr_none_when_initial_zero_with_inflows(self) -> None:
+        """CAGR is None for DCA strategies (initial=0, periodic inflows)."""
+        inflows = [_make_inflow(500.0, day_offset=i * 30) for i in range(12)]
+        result = _make_result(
+            [0.0] + [500.0 * (i + 1) for i in range(12)],
+            days=365,
+            initial_capital=0.0,
+            processed_inflows=inflows,
+        )
+        metrics = MetricsCalculator().calculate(result)
+        assert metrics.cagr is None
+
     def test_calculate_max_drawdown_captured(self) -> None:
         equity = [10_000.0, 12_000.0, 9_000.0, 11_000.0]
         result = _make_result(equity, days=365)
@@ -619,3 +648,69 @@ class TestCalculateMain:
         result = _make_result(equity, days=365, has_positions=has_pos)
         metrics = MetricsCalculator().calculate(result)
         assert metrics.time_in_market_pct == pytest.approx(0.5)
+
+
+# ---------------------------------------------------------------------------
+# total_return_pct with inflows — the DCA / STRAT-06 bug fix
+# ---------------------------------------------------------------------------
+
+
+class TestTotalReturnWithInflows:
+    def test_total_return_pct_with_inflows_only(self) -> None:
+        """initial=0, inflows=€51k total, final=€100k → pct = (100k-51k)/51k."""
+        inflows = [_make_inflow(500.0, day_offset=i * 30) for i in range(102)]
+        total_inflow = 102 * 500.0  # 51_000
+        final = 100_000.0
+        equity = [float(500 * (i + 1)) for i in range(102)]
+        equity[-1] = final
+        result = _make_result(
+            equity,
+            days=3060,
+            initial_capital=0.0,
+            processed_inflows=inflows,
+        )
+        metrics = MetricsCalculator().calculate(result)
+
+        expected_pct = (final - total_inflow) / total_inflow
+        assert metrics.total_return_pct == pytest.approx(expected_pct)
+        assert metrics.total_return_eur == pytest.approx(final - total_inflow)
+        assert metrics.total_invested_eur == pytest.approx(total_inflow)
+
+    def test_total_return_pct_mixed_initial_and_inflows(self) -> None:
+        """initial=€10k, inflows=€5k, final=€20k → pct = (20k-15k)/15k."""
+        inflows = [_make_inflow(1_000.0, day_offset=i * 30) for i in range(5)]
+        total_inflow = 5 * 1_000.0
+        initial = 10_000.0
+        total_invested = initial + total_inflow  # 15_000
+        final = 20_000.0
+        result = _make_result(
+            [10_000.0, 20_000.0],
+            days=365,
+            initial_capital=initial,
+            processed_inflows=inflows,
+        )
+        metrics = MetricsCalculator().calculate(result)
+
+        expected_pct = (final - total_invested) / total_invested
+        assert metrics.total_return_pct == pytest.approx(expected_pct)
+        assert metrics.total_invested_eur == pytest.approx(total_invested)
+
+    def test_total_return_pct_zero_total_invested_no_raise(self) -> None:
+        """initial=0, no inflows → total_invested=0 → return 0.0, no exception."""
+        result = _make_result(
+            [0.0, 0.0],
+            days=365,
+            initial_capital=0.0,
+            processed_inflows=[],
+        )
+        metrics = MetricsCalculator().calculate(result)
+        assert metrics.total_return_pct == pytest.approx(0.0)
+        assert metrics.total_invested_eur == pytest.approx(0.0)
+
+    def test_total_return_pct_initial_only_unchanged(self) -> None:
+        """No inflows: behaviour is identical to the pre-fix formula."""
+        result = _make_result([10_000.0, 12_000.0], days=365, initial_capital=10_000.0)
+        metrics = MetricsCalculator().calculate(result)
+        assert metrics.total_return_pct == pytest.approx(0.2)
+        assert metrics.total_return_eur == pytest.approx(2_000.0)
+        assert metrics.total_invested_eur == pytest.approx(10_000.0)

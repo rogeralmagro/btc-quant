@@ -41,6 +41,7 @@ def _minimal_report(**overrides) -> MetricsReport:
         "end_date_utc": datetime(2024, 12, 31, tzinfo=UTC),
         "duration_days": 365,
         "initial_capital_eur": 10_000.0,
+        "total_invested_eur": 10_000.0,
         "final_capital_eur": 12_000.0,
         "total_return_eur": 2_000.0,
         "total_return_pct": 0.2,

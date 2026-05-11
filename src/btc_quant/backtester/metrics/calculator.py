@@ -56,12 +56,26 @@ class MetricsCalculator:
         final = equity_values[-1] if equity_values else initial
         duration_days = (result.end_date_utc - result.start_date_utc).days
 
+        # Total capital deployed = seed capital + all inflows received.
+        # Used as denominator for return metrics so DCA strategies (initial=0)
+        # are not subject to ZeroDivisionError and returns are economically meaningful.
+        total_invested = initial + sum(
+            inflow.amount_eur for inflow in result.processed_inflows
+        )
+
         returns = self.calculate_returns(equity_values)
 
         # ── Return metrics ────────────────────────────────────────────────────
-        total_return_eur = final - initial
-        total_return_pct = total_return_eur / initial
-        cagr = self.calculate_cagr(initial, final, duration_days, self._trading_days_per_year)
+        total_return_eur = final - total_invested
+        total_return_pct = total_return_eur / total_invested if total_invested > 0 else 0.0
+
+        # CAGR assumes a single lump-sum investment. When the strategy receives
+        # periodic inflows (DCA pattern) the formula is misleading, so return None.
+        # Also guard initial <= 0 to prevent ZeroDivisionError inside calculate_cagr.
+        if initial <= 0.0 or result.processed_inflows:
+            cagr = None
+        else:
+            cagr = self.calculate_cagr(initial, final, duration_days, self._trading_days_per_year)
 
         has_positions = [s.open_positions_count > 0 for s in result.equity_curve]
         time_in_market = self.calculate_time_in_market(has_positions)
@@ -118,7 +132,7 @@ class MetricsCalculator:
             total_fees += pos.fees_paid_eur
 
         # ── Per-strategy breakdown ─────────────────────────────────────────────
-        metrics_by_strategy = self._calculate_strategy_metrics(result, result.equity_curve)
+        metrics_by_strategy = self._calculate_strategy_metrics(result, result.equity_curve, total_invested)
 
         # ── STRAT-06 DCA metrics ───────────────────────────────────────────────
         strat06 = result.final_portfolio.pools.get(StrategyTag.STRAT_06_BASELINE)
@@ -145,6 +159,7 @@ class MetricsCalculator:
             end_date_utc=result.end_date_utc,
             duration_days=duration_days,
             initial_capital_eur=initial,
+            total_invested_eur=total_invested,
             final_capital_eur=final,
             total_return_eur=total_return_eur,
             total_return_pct=total_return_pct,
@@ -221,6 +236,8 @@ class MetricsCalculator:
                 running_peak = equity_curve[i]
                 running_peak_idx = i
             else:
+                if running_peak == 0.0:
+                    continue
                 dd = (equity_curve[i] - running_peak) / running_peak
                 if dd < max_dd:
                     max_dd = dd
@@ -416,6 +433,7 @@ class MetricsCalculator:
         self,
         result: BacktestResult,
         snapshots: list[PortfolioSnapshot],
+        total_invested_eur: float,
     ) -> dict[StrategyTag, StrategyMetrics]:
         metrics: dict[StrategyTag, StrategyMetrics] = {}
         for tag in result.strategies_used:
@@ -439,7 +457,7 @@ class MetricsCalculator:
                 total_pnl = 0.0
                 win_rate = pf = avg_pnl = avg_r = None
 
-            contribution = total_pnl / result.initial_capital_eur
+            contribution = total_pnl / total_invested_eur if total_invested_eur > 0 else 0.0
 
             # Per-strategy time in market: fraction of snapshots where this
             # strategy had at least one open position.

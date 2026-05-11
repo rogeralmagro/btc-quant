@@ -44,12 +44,19 @@ class MetricsReport:
     end_date_utc: datetime
     duration_days: int
     initial_capital_eur: float
+    total_invested_eur: float   # initial_capital_eur + sum of all processed inflows
     final_capital_eur: float
 
     # ── Return metrics ────────────────────────────────────────────────────────
-    total_return_eur: float
-    total_return_pct: float
-    cagr: float | None
+    total_return_eur: float     # final_capital_eur - total_invested_eur
+    total_return_pct: float     # total_return_eur / total_invested_eur
+                                # (NOT over initial_capital alone — misleading for DCA
+                                #  strategies that start at €0 and receive periodic inflows.
+                                #  Example: initial=0, inflows=€51k, final=€100k →
+                                #  total_return_pct = (100k - 51k) / 51k = +96.1%)
+    cagr: float | None          # None if duration < 30 days OR initial_capital_eur == 0
+                                # with processed inflows (CAGR assumes lump-sum investment;
+                                # use IRR for periodic contributions — not implemented in V1)
     time_in_market_pct: float       # fraction of bars with >= 1 open position
 
     # ── Risk metrics ─────────────────────────────────────────────────────────
