@@ -210,7 +210,7 @@ class TestStrat06IntegrationWithEngine:
         prices = [50_000.0] * 100 + [1_000_000.0] * 100
 
         df = make_synthetic_1d_dataset(n, START, price_series=prices)
-        cfg = DCAModulatedConfig(monthly_inflow_eur=500.0)
+        cfg = DCAModulatedConfig(monthly_inflow_eur=500.0, max_concentration_pct=0.70)
         # No inflows — use fixed initial capital only
         initial = {_BASELINE: 5_000.0, _BUFFER: 0.0, _RESERVE: 0.0}
 

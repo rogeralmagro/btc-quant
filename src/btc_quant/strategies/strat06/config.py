@@ -60,7 +60,19 @@ class DCAModulatedConfig:
     # Operational limits:
     symbol: str = "BTCUSDT"
     min_order_eur: float = 10.0
-    max_concentration_pct: float = 0.70
+    max_concentration_pct: float = 1.0
+    """
+    Maximum BTC concentration allowed before blocking baseline buys.
+
+    DEFAULT: 1.0 (effectively disabled).
+
+    Rationale documented in docs/reports/STRAT_06_DESIGN_REFINEMENT_001.md.
+
+    The concentration guard from SYSTEM_FINAL §4 applies to system-wide
+    allocation decisions and is not appropriate for a pure-accumulation
+    strategy like STRAT-06. Future strategy variants may override this if
+    needed.
+    """
 
     # ── Derived properties ────────────────────────────────────────────────────
 

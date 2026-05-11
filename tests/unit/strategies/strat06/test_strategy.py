@@ -387,13 +387,15 @@ class TestATHTracking:
 
 
 class TestConcentrationLimit:
-    def test_no_buy_when_concentration_above_70(
-        self, mock_context_factory, mock_portfolio_factory, default_config
+    def test_no_buy_when_concentration_above_limit_when_configured(
+        self, mock_context_factory
     ) -> None:
-        # cash=100, btc_held=0.005 at 50k → btc_value=250, total=350, conc=71.4%
-        strat = _strat(default_config)
+        # Guard works when explicitly configured: cash=100, btc=0.005 at 50k
+        # → btc_value=250, total=350, conc=71.4% > 0.70 threshold → blocked
         from btc_quant.backtester.models.pool import CapitalPool
         from btc_quant.backtester.models.portfolio import Portfolio
+        cfg = DCAModulatedConfig(monthly_inflow_eur=500.0, max_concentration_pct=0.70)
+        strat = _strat(cfg)
         port = Portfolio(
             pools={
                 StrategyTag.STRAT_06_BASELINE: CapitalPool(
@@ -414,6 +416,36 @@ class TestConcentrationLimit:
         ctx = mock_context_factory(MONDAY, 50_000.0)
         signals = strat.generate_signals(ctx, port)
         assert signals == []
+
+    def test_concentration_check_disabled_by_default_allows_all(
+        self, mock_context_factory
+    ) -> None:
+        # Default max_concentration_pct=1.0 — high BTC concentration must NOT block buys.
+        # cash=100, btc=0.005 at 50k → btc_value=250, total=350, conc=71.4%
+        # With default threshold 1.0 this fires normally.
+        from btc_quant.backtester.models.pool import CapitalPool
+        from btc_quant.backtester.models.portfolio import Portfolio
+        strat = _strat(DCAModulatedConfig(monthly_inflow_eur=500.0))
+        port = Portfolio(
+            pools={
+                StrategyTag.STRAT_06_BASELINE: CapitalPool(
+                    strategy_tag=StrategyTag.STRAT_06_BASELINE,
+                    cash_eur=100.0,
+                    btc_held=0.005,
+                ),
+                StrategyTag.STRAT_06_BUFFER: CapitalPool(
+                    strategy_tag=StrategyTag.STRAT_06_BUFFER,
+                    cash_eur=0.0,
+                ),
+                StrategyTag.STRAT_06_RESERVE: CapitalPool(
+                    strategy_tag=StrategyTag.STRAT_06_RESERVE,
+                    cash_eur=0.0,
+                ),
+            }
+        )
+        ctx = mock_context_factory(MONDAY, 50_000.0)
+        signals = strat.generate_signals(ctx, port)
+        assert len(signals) == 1
 
     def test_buy_resumes_after_concentration_drops(
         self, mock_context_factory, mock_portfolio_factory, default_config

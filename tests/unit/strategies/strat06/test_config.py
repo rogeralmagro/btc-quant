@@ -29,7 +29,11 @@ class TestDCAModulatedConfigValid:
         assert cfg.persistence_days_for_tranche == 7
         assert cfg.symbol == "BTCUSDT"
         assert cfg.min_order_eur == 10.0
-        assert cfg.max_concentration_pct == 0.70
+        assert cfg.max_concentration_pct == 1.0
+
+    def test_concentration_default_is_one_for_strat06(self) -> None:
+        cfg = DCAModulatedConfig(monthly_inflow_eur=500)
+        assert cfg.max_concentration_pct == 1.0
 
     def test_reserve_cap_eur_calculation(self) -> None:
         # monthly=500, reserve_pct=0.25, cap_months=12 → 500 * 0.25 * 12 = 1500
