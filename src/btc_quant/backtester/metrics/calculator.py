@@ -41,15 +41,30 @@ class MetricsCalculator:
         result: BacktestResult,
         bah_equity_curve: list[float] | None = None,
         dca_equity_curve: list[float] | None = None,
+        bah_total_invested: float | None = None,
+        dca_total_invested: float | None = None,
     ) -> MetricsReport:
         """Compute all metrics and return an immutable MetricsReport.
 
         Args:
-            result:            Full BacktestResult from BacktestEngine.run().
-            bah_equity_curve:  Optional buy-and-hold equity curve (list of EUR
-                               portfolio values) over the same period. When
-                               provided, ``excess_return_vs_bah_pct`` is set.
-            dca_equity_curve:  Optional pure-DCA equity curve. Same semantics.
+            result:              Full BacktestResult from BacktestEngine.run().
+            bah_equity_curve:    Optional buy-and-hold equity curve (EUR values).
+                                 Required alongside bah_total_invested to compute
+                                 excess_return_vs_bah_pct.
+            dca_equity_curve:    Optional pure-DCA equity curve. Same semantics.
+            bah_total_invested:  Total EUR deployed by the BAH benchmark
+                                 (initial_capital for lump-sum, or initial +
+                                 sum(inflows) for a DCA-style BAH).
+            dca_total_invested:  Total EUR deployed by the DCA benchmark.
+
+        Excess-return semantics
+        -----------------------
+        Both excess_return_vs_* fields are computed as:
+            this_strategy_total_return_pct - benchmark_total_return_pct
+        where each total_return_pct = (final - total_invested) / total_invested.
+        Using total_invested (not curve[0]) is required for strategies with
+        periodic inflows, whose equity curve starts near €0 regardless of how
+        much capital they eventually deploy.
         """
         equity_values = [s.total_value_eur for s in result.equity_curve]
         initial = result.initial_capital_eur
@@ -145,13 +160,27 @@ class MetricsCalculator:
             total_btc = avg_cost = btc_per_eur = None
 
         # ── Benchmark comparisons ─────────────────────────────────────────────
+        # Returns are computed as (final - total_invested) / total_invested so
+        # that strategies with periodic inflows are treated correctly. The old
+        # formula (curve[-1] - curve[0]) / curve[0] is conceptually identical
+        # to the bug fixed in total_return_pct: curve[0] ≈ €0 for DCA strategies.
         excess_bah: float | None = None
         excess_dca: float | None = None
-        if bah_equity_curve and len(bah_equity_curve) >= 2:
-            bah_ret = (bah_equity_curve[-1] - bah_equity_curve[0]) / bah_equity_curve[0]
+        if (
+            bah_equity_curve
+            and len(bah_equity_curve) >= 2
+            and bah_total_invested is not None
+            and bah_total_invested > 0
+        ):
+            bah_ret = (bah_equity_curve[-1] - bah_total_invested) / bah_total_invested
             excess_bah = total_return_pct - bah_ret
-        if dca_equity_curve and len(dca_equity_curve) >= 2:
-            dca_ret = (dca_equity_curve[-1] - dca_equity_curve[0]) / dca_equity_curve[0]
+        if (
+            dca_equity_curve
+            and len(dca_equity_curve) >= 2
+            and dca_total_invested is not None
+            and dca_total_invested > 0
+        ):
+            dca_ret = (dca_equity_curve[-1] - dca_total_invested) / dca_total_invested
             excess_dca = total_return_pct - dca_ret
 
         return MetricsReport(

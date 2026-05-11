@@ -597,14 +597,22 @@ class TestCalculateMain:
         assert metrics.win_rate == pytest.approx(0.5)
 
     def test_calculate_with_benchmarks(self) -> None:
-        """excess_return fields are populated when benchmarks are provided."""
-        equity = [10_000.0, 12_000.0]  # +20% strategy
-        bah = [10_000.0, 11_000.0]     # +10% BAH
-        dca = [10_000.0, 10_500.0]     # +5% DCA
-        result = _make_result(equity, days=365)
-        metrics = MetricsCalculator().calculate(result, bah_equity_curve=bah, dca_equity_curve=dca)
-        assert metrics.excess_return_vs_bah_pct == pytest.approx(0.10)
-        assert metrics.excess_return_vs_dca_pct == pytest.approx(0.15)
+        """excess_return fields use total_invested, not curve[0]."""
+        # Strategy: initial=0, inflows=10000, final=15000 → return 50%
+        inflows = [_make_inflow(10_000.0, day_offset=0)]
+        equity = [0.0, 15_000.0]
+        result = _make_result(equity, days=365, initial_capital=0.0, processed_inflows=inflows)
+        # BAH: lump-sum 10000 → 20000 = +100%
+        bah = [10_000.0, 20_000.0]
+        # DCA: invested 10000 → 12000 = +20%
+        dca = [0.0, 12_000.0]
+        metrics = MetricsCalculator().calculate(
+            result,
+            bah_equity_curve=bah, bah_total_invested=10_000.0,
+            dca_equity_curve=dca, dca_total_invested=10_000.0,
+        )
+        assert metrics.excess_return_vs_bah_pct == pytest.approx(0.50 - 1.00)   # -50%
+        assert metrics.excess_return_vs_dca_pct == pytest.approx(0.50 - 0.20)   # +30%
 
     def test_calculate_no_benchmarks_gives_none(self) -> None:
         result = _make_result([10_000.0, 11_000.0], days=365)
@@ -714,3 +722,70 @@ class TestTotalReturnWithInflows:
         assert metrics.total_return_pct == pytest.approx(0.2)
         assert metrics.total_return_eur == pytest.approx(2_000.0)
         assert metrics.total_invested_eur == pytest.approx(10_000.0)
+
+
+# ---------------------------------------------------------------------------
+# excess_return_vs_bah/dca — semantic fix (total_invested, not curve[0])
+# ---------------------------------------------------------------------------
+
+
+class TestExcessReturnBenchmarks:
+    def test_excess_return_vs_bah_lump_sum(self) -> None:
+        """BAH: initial=10k, no inflows, final=20k → return 100%.
+        STRAT: initial=0, inflows=10k, final=15k → return 50%.
+        excess_bah = 50% - 100% = -50%."""
+        inflows = [_make_inflow(10_000.0)]
+        result = _make_result(
+            [0.0, 15_000.0], days=365, initial_capital=0.0, processed_inflows=inflows
+        )
+        bah = [10_000.0, 20_000.0]
+        metrics = MetricsCalculator().calculate(
+            result, bah_equity_curve=bah, bah_total_invested=10_000.0
+        )
+        assert metrics.excess_return_vs_bah_pct == pytest.approx(-0.50)
+
+    def test_excess_return_vs_dca_with_inflows(self) -> None:
+        """DCA: invested=10k, final=12k → return 20%.
+        STRAT: invested=10k, final=14k → return 40%.
+        excess_dca = 40% - 20% = +20%."""
+        inflows = [_make_inflow(10_000.0)]
+        result = _make_result(
+            [0.0, 14_000.0], days=365, initial_capital=0.0, processed_inflows=inflows
+        )
+        dca = [0.0, 12_000.0]
+        metrics = MetricsCalculator().calculate(
+            result, dca_equity_curve=dca, dca_total_invested=10_000.0
+        )
+        assert metrics.excess_return_vs_dca_pct == pytest.approx(0.20)
+
+    def test_excess_return_none_when_total_invested_missing(self) -> None:
+        """excess_* = None when total_invested is not passed."""
+        result = _make_result([10_000.0, 12_000.0], days=365)
+        bah = [10_000.0, 11_000.0]
+        dca = [10_000.0, 10_500.0]
+        # curves provided but no total_invested args
+        metrics = MetricsCalculator().calculate(
+            result, bah_equity_curve=bah, dca_equity_curve=dca
+        )
+        assert metrics.excess_return_vs_bah_pct is None
+        assert metrics.excess_return_vs_dca_pct is None
+
+    def test_excess_return_none_when_total_invested_zero(self) -> None:
+        """excess_* = None when total_invested is 0 (degenerate)."""
+        result = _make_result([10_000.0, 12_000.0], days=365)
+        metrics = MetricsCalculator().calculate(
+            result,
+            bah_equity_curve=[10_000.0, 11_000.0], bah_total_invested=0.0,
+            dca_equity_curve=[10_000.0, 10_500.0], dca_total_invested=0.0,
+        )
+        assert metrics.excess_return_vs_bah_pct is None
+        assert metrics.excess_return_vs_dca_pct is None
+
+    def test_excess_return_none_without_curve(self) -> None:
+        """excess_* = None when equity curve is not supplied."""
+        result = _make_result([10_000.0, 12_000.0], days=365)
+        metrics = MetricsCalculator().calculate(
+            result, bah_total_invested=10_000.0, dca_total_invested=10_000.0
+        )
+        assert metrics.excess_return_vs_bah_pct is None
+        assert metrics.excess_return_vs_dca_pct is None

@@ -75,7 +75,6 @@ from btc_quant.strategies.buy_and_hold import BuyAndHoldStrategy
 from btc_quant.strategies.dca_benchmark import DCABenchmarkStrategy
 from btc_quant.strategies.strat06.config import DCAModulatedConfig
 from btc_quant.strategies.strat06.strategy import DCAModulatedStrategy
-from tests.integration.conftest import make_strat06_inflows
 
 UTC = timezone.utc
 
@@ -87,6 +86,31 @@ _RESERVE = StrategyTag.STRAT_06_RESERVE
 
 MONTHLY_INFLOW_EUR = 500.0
 WEEKLY_AMOUNT_EUR = round(MONTHLY_INFLOW_EUR * 12 / 52, 2)  # 115.38
+
+
+# ── STRAT-06 inflow helper (mirrors tests/integration/conftest.py) ────────────
+
+
+def _make_strat06_inflows(cfg: DCAModulatedConfig, start: datetime, end: datetime) -> list:
+    baseline = InflowScheduler.monthly(
+        amount_eur=cfg.monthly_inflow_eur * cfg.baseline_pct,
+        target_strategy=_BASELINE,
+        start_date=start,
+        end_date=end,
+    )
+    buffer_ = InflowScheduler.monthly(
+        amount_eur=cfg.monthly_inflow_eur * cfg.buffer_pct,
+        target_strategy=_BUFFER,
+        start_date=start,
+        end_date=end,
+    )
+    reserve = InflowScheduler.monthly(
+        amount_eur=cfg.monthly_inflow_eur * cfg.reserve_pct,
+        target_strategy=_RESERVE,
+        start_date=start,
+        end_date=end,
+    )
+    return sorted(baseline + buffer_ + reserve, key=lambda x: x.timestamp_utc)
 
 
 # ── Data loading ─────────────────────────────────────────────────────────────
@@ -155,7 +179,7 @@ def run_dca(df: pd.DataFrame, start: datetime, end: datetime):
 
 def run_strat06(df: pd.DataFrame, start: datetime, end: datetime):
     cfg = DCAModulatedConfig(monthly_inflow_eur=MONTHLY_INFLOW_EUR)
-    inflows = make_strat06_inflows(cfg, start, end)
+    inflows = _make_strat06_inflows(cfg, start, end)
     engine = BacktestEngine(
         strategies=[DCAModulatedStrategy(cfg)],
         data={"1d": df},
@@ -303,12 +327,21 @@ def main(data_path: Path, output_dir: Path | None = None) -> Path:
     bah_curve = [s.total_value_eur for s in result_bah.equity_curve]
     dca_curve = [s.total_value_eur for s in result_dca.equity_curve]
 
+    # total_invested for each benchmark (needed for correct excess-return calc)
+    bah_total_invested = result_bah.initial_capital_eur  # lump-sum, no inflows
+    dca_total_invested = sum(
+        inflow.amount_eur for inflow in result_dca.processed_inflows
+    )
+
     metrics_bah = calc.calculate(result_bah)
-    metrics_dca = calc.calculate(result_dca, bah_equity_curve=bah_curve)
+    metrics_dca = calc.calculate(result_dca, bah_equity_curve=bah_curve,
+                                 bah_total_invested=bah_total_invested)
     metrics_strat06 = calc.calculate(
         result_strat06,
         bah_equity_curve=bah_curve,
+        bah_total_invested=bah_total_invested,
         dca_equity_curve=dca_curve,
+        dca_total_invested=dca_total_invested,
     )
 
     # ── Prepare output directory ──────────────────────────────────────────────
