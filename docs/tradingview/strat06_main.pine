@@ -1,0 +1,180 @@
+// ============================================================
+// STRAT-06 (Drawdown-Modulated DCA + Deep-Value Reserve)
+// Cross-Validation (F5.1)
+// Chart: BINANCE:BTCUSDT  |  TF: 1D  |  Range: 2017-08-17 → 2026-05-06
+// ============================================================
+//@version=5
+indicator("STRAT-06 (F5.1)", overlay=true, max_bars_back=5000)
+
+// ── Parameters ────────────────────────────────────────────────────────────────
+var float MONTHLY_INFLOW = 500.0
+var float BASELINE_PCT   = 0.55   // 55%
+var float BUFFER_PCT     = 0.20   // 20%
+var float RESERVE_PCT    = 0.25   // 25%
+var float RESERVE_CAP    = 1500.0 // 12 months × €125
+var float WEEKLY_BASE    = MONTHLY_INFLOW * BASELINE_PCT / 4.0  // 68.75/week
+var int   PERSIST_DAYS   = 7
+var float FEE_RATE       = 0.001
+var float MIN_ORDER      = 10.0
+
+// ── Start date: 2017-08-17 ────────────────────────────────────────────────────
+bool after_start = timestamp("UTC", 2017, 8, 17, 0, 0) <= time
+
+// ── Pool state ────────────────────────────────────────────────────────────────
+var float baseline_cash = 0.0
+var float buffer_cash   = 0.0
+var float reserve_cash  = 0.0
+var float btc_held      = 0.0
+var float total_cost    = 0.0   // cumulative EUR spent on BTC (ex-fees)
+var float total_inflows = 0.0
+
+// ── ATH tracking ──────────────────────────────────────────────────────────────
+var float ath_price = 0.0
+
+// ── Reserve cycle state ───────────────────────────────────────────────────────
+var int   persist_count = 0
+var bool  t1_used = false  // tranche 1: -50%
+var bool  t2_used = false  // tranche 2: -60%
+var bool  t3_used = false  // tranche 3: -70%
+var bool  t4_used = false  // tranche 4: -75%
+
+// ── ATH update & cycle reset ──────────────────────────────────────────────────
+if after_start and close > 0
+    if close > ath_price
+        ath_price := close
+        // New ATH resets the reserve deployment cycle
+        t1_used := false
+        t2_used := false
+        t3_used := false
+        t4_used := false
+
+float drawdown = ath_price > 0 ? (close - ath_price) / ath_price : 0.0
+
+// ── Persistence counter (consecutive days with drawdown ≤ -50%) ──────────────
+if after_start
+    if drawdown <= -0.50
+        persist_count := persist_count + 1
+    else
+        persist_count := 0
+
+// ── Monthly inflow (first bar of each month) ──────────────────────────────────
+bool new_month = after_start and (ta.change(month) != 0 or (bar_index == 0 and after_start))
+
+if new_month
+    total_inflows  := total_inflows + MONTHLY_INFLOW
+    baseline_cash  := baseline_cash + MONTHLY_INFLOW * BASELINE_PCT  // +275
+    buffer_cash    := buffer_cash   + MONTHLY_INFLOW * BUFFER_PCT    // +100
+    // Reserve: fill to cap, overflow goes to buffer
+    float res_inflow  = MONTHLY_INFLOW * RESERVE_PCT                 // 125
+    float space       = RESERVE_CAP - reserve_cash
+    float deposited   = math.min(res_inflow, math.max(0.0, space))
+    float overflow    = res_inflow - deposited
+    reserve_cash     := reserve_cash + deposited
+    buffer_cash      := buffer_cash  + overflow
+
+// ── Reserve deployment ────────────────────────────────────────────────────────
+bool  deploy_marker  = false
+float deploy_amount  = 0.0
+
+if after_start and persist_count >= PERSIST_DAYS and reserve_cash > MIN_ORDER
+    // Evaluate from deepest tranche to shallowest (deepest fires first)
+    if drawdown <= -0.75 and not t4_used
+        deploy_amount  := reserve_cash * 0.30
+        reserve_cash   := reserve_cash   - deploy_amount
+        baseline_cash  := baseline_cash  + deploy_amount
+        t4_used        := true
+        deploy_marker  := true
+    else if drawdown <= -0.70 and not t3_used
+        deploy_amount  := reserve_cash * 0.25
+        reserve_cash   := reserve_cash   - deploy_amount
+        baseline_cash  := baseline_cash  + deploy_amount
+        t3_used        := true
+        deploy_marker  := true
+    else if drawdown <= -0.60 and not t2_used
+        deploy_amount  := reserve_cash * 0.25
+        reserve_cash   := reserve_cash   - deploy_amount
+        baseline_cash  := baseline_cash  + deploy_amount
+        t2_used        := true
+        deploy_marker  := true
+    else if drawdown <= -0.50 and not t1_used
+        deploy_amount  := reserve_cash * 0.20
+        reserve_cash   := reserve_cash   - deploy_amount
+        baseline_cash  := baseline_cash  + deploy_amount
+        t1_used        := true
+        deploy_marker  := true
+
+// ── Weekly baseline buy (every Monday) ───────────────────────────────────────
+bool is_monday = dayofweek == dayofweek.monday
+
+float mult = 1.0
+if drawdown <= -0.50
+    mult := 2.50
+else if drawdown <= -0.35
+    mult := 2.00
+else if drawdown <= -0.20
+    mult := 1.50
+else if drawdown <= -0.10
+    mult := 1.25
+
+if after_start and is_monday and close > 0
+    float target  = WEEKLY_BASE * mult
+    // BUFFER covers deficit
+    float deficit    = math.max(0.0, target - baseline_cash)
+    float buf_xfer   = math.min(deficit, buffer_cash)
+    buffer_cash      := buffer_cash   - buf_xfer
+    baseline_cash    := baseline_cash + buf_xfer
+    // Execute buy
+    float spend   = math.min(baseline_cash, target)
+    if spend >= MIN_ORDER
+        float btc_net  = spend * (1.0 - FEE_RATE) / close
+        btc_held       := btc_held    + btc_net
+        total_cost     := total_cost  + spend
+        baseline_cash  := baseline_cash - spend
+
+// ── Portfolio value ───────────────────────────────────────────────────────────
+float total_cash = baseline_cash + buffer_cash + reserve_cash
+float pv         = after_start ? btc_held * close + total_cash : na
+float cost_basis = btc_held > 0 ? total_cost / btc_held : na
+
+// ── Overlay plot: reserve deployment markers ──────────────────────────────────
+plotshape(deploy_marker, "Reserve Deploy", shape.triangleup, location.belowbar,
+          color.new(color.red, 0), size=size.normal)
+
+if deploy_marker
+    label.new(bar_index, low * 0.96,
+              "RESERVE\n€" + str.tostring(deploy_amount, "#.0") +
+              "\nDD " + str.tostring(drawdown * 100, "#.1") + "%",
+              color=color.new(color.red, 20), textcolor=color.white,
+              style=label.style_label_up, size=size.small)
+
+// ── Separate pane: portfolio value ────────────────────────────────────────────
+// (overlay=true so this won't show as pane — use with a companion indicator
+//  or switch overlay=false if you want equity curve in a separate pane)
+
+// ── Dashboard (last bar) ──────────────────────────────────────────────────────
+if barstate.islast and after_start
+    var table t = table.new(position.top_right, 2, 8,
+                            bgcolor=color.new(color.black, 70), border_width=1)
+    table.cell(t, 0, 0, "STRAT-06",          text_color=color.white,  text_size=size.normal)
+    table.cell(t, 1, 0, "",                   text_color=color.white)
+    table.cell(t, 0, 1, "Portfolio €",        text_color=color.gray)
+    table.cell(t, 1, 1, str.tostring(math.round(pv), "#,###"),               text_color=color.white)
+    table.cell(t, 0, 2, "BTC held",           text_color=color.gray)
+    table.cell(t, 1, 2, str.tostring(btc_held, "#.####"),                    text_color=color.white)
+    table.cell(t, 0, 3, "Cost basis €/BTC",   text_color=color.gray)
+    table.cell(t, 1, 3, str.tostring(math.round(cost_basis), "#,###"),       text_color=color.white)
+    table.cell(t, 0, 4, "BASELINE cash €",    text_color=color.gray)
+    table.cell(t, 1, 4, str.tostring(math.round(baseline_cash), "#,###"),    text_color=color.yellow)
+    table.cell(t, 0, 5, "BUFFER cash €",      text_color=color.gray)
+    table.cell(t, 1, 5, str.tostring(math.round(buffer_cash), "#,###"),      text_color=color.yellow)
+    table.cell(t, 0, 6, "RESERVE cash €",     text_color=color.gray)
+    table.cell(t, 1, 6, str.tostring(math.round(reserve_cash), "#,###"),     text_color=color.yellow)
+    table.cell(t, 0, 7, "Drawdown",           text_color=color.gray)
+    table.cell(t, 1, 7, str.tostring(drawdown * 100, "#.1") + "%",           text_color=color.red)
+
+// ── Validation targets (F5.1) ─────────────────────────────────────────────────
+// Verification 1 — 8 red triangles at:
+//   2018-02-07, 2018-04-04, 2018-11-22, 2018-11-26
+//   2022-05-15, 2022-06-18, 2022-07-05, 2022-11-22
+// Verification 2 — Cost basis ≈ €8,775/BTC  [€8,336 – €9,214]
+// Verification 3 — BTC held   ≈ 3.29        [3.13 – 3.45]
