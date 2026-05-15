@@ -1,9 +1,16 @@
 # STRAT-06 Historical Validation Report
 
-**Version:** 1.0  
-**Date:** 2026-05-11  
-**Backtest run:** `data/reports/strat06_comparative_20260511_193601/`  
+**Version:** 1.1  
+**Date:** 2026-05-11 (updated 2026-05-15)  
+**Backtest run:** `data/reports/strat06_comparative_20260515_140501/`  
 **Author:** btc-quant project
+
+> **Note (2026-05-15):** Cost basis figures for STRAT-06 corrected following bug fix
+> in `src/btc_quant/backtester/metrics/calculator.py` (see
+> `docs/reports/STRAT_06_DESIGN_REFINEMENT_002.md`). Previously reported €8,775/BTC
+> was incorrect — `total_invested_eur` only captured direct BASELINE inflows, ignoring
+> €18,658 transferred from BUFFER and RESERVE. Corrected value: **€14,389/BTC**.
+> Strategy execution and all other metrics are unchanged.
 
 ---
 
@@ -88,7 +95,7 @@ the risk-reduction benefit of cost averaging over a volatile asset.
 
 - **Invested:** €52,500 (105 monthly inflows)
 - **Final value:** €273,105
-- **BTC accumulated:** 3.2905 at avg cost basis €14,058/BTC
+- **BTC accumulated:** 3.2905 at avg cost basis €14,389/BTC
 - **Return:** +420.2% | **CAGR:** N/A
 - **Max drawdown:** −73.9% | **Sharpe:** 1.34 | **Sortino:** 2.17
 - **Idle cash:** €5,105.35 (9.7%)
@@ -197,11 +204,13 @@ cost of **slightly lower absolute returns**:
 | Max drawdown | STRAT-06 better | +0.9 pp shallower |
 | Sharpe ratio | STRAT-06 better | +0.02 |
 | Sortino ratio | STRAT-06 better | +0.10 |
-| Fees paid | STRAT-06 lower | €16 vs €52 |
+| Avg cost basis | STRAT-06 better | €14,389 vs €14,973 (−3.9%) |
+| Fees paid | STRAT-06 lower | €47 vs €52 |
 
-The fee advantage (€36 saved) is negligible. The return gap is structural: STRAT-06
-withholds €5,105 as dry powder and deploys capital with a deliberate "wait for dips"
-bias, which — over an 8.5-year bull market in BTC — costs returns.
+The cost basis advantage (−3.9%) is modest: STRAT-06 acquires BTC at a marginally
+lower average price than DCA through its modulated buying and reserve deployments,
+but the anti-cyclical bias is insufficient to overcome the drag of €5,105 held as
+dry powder over an 8.5-year bull market. The return gap is structural.
 
 ### 6.2 STRAT-06 vs Buy-and-Hold: Verdict
 

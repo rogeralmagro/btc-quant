@@ -153,9 +153,15 @@ class MetricsCalculator:
         strat06 = result.final_portfolio.pools.get(StrategyTag.STRAT_06_BASELINE)
         if strat06 is not None and strat06.btc_held > 0:
             total_btc: float | None = strat06.btc_held
-            invested = strat06.total_invested_eur
-            avg_cost: float | None = invested / strat06.btc_held
-            btc_per_eur: float | None = strat06.btc_held / invested if invested > 0 else None
+            # Use cost_basis_eur (tracks add_btc(), includes capital from inter-pool
+            # transfers) rather than total_invested_eur (only counts add_cash() inflows).
+            # Fix for F5.1 bug: see docs/reports/STRAT_06_DESIGN_REFINEMENT_002.md
+            avg_cost: float | None = strat06.average_entry_price()
+            btc_per_eur: float | None = (
+                strat06.btc_held / strat06.cost_basis_eur
+                if strat06.cost_basis_eur > 0
+                else None
+            )
         else:
             total_btc = avg_cost = btc_per_eur = None
 

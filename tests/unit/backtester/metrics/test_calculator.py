@@ -808,3 +808,102 @@ class TestExcessReturnBenchmarks:
         )
         assert metrics.excess_return_vs_bah_pct is None
         assert metrics.excess_return_vs_dca_pct is None
+
+
+# ---------------------------------------------------------------------------
+# Regression test: F5.1 cost basis bug fix (DESIGN_REFINEMENT_002)
+# ---------------------------------------------------------------------------
+
+
+class TestAvgCostBasisInterPoolTransfers:
+    """Regression tests for F5.1 bug fix.
+
+    cost_basis_eur (via add_btc) includes all capital sources.
+    total_invested_eur (via add_cash) only includes direct inflows.
+    MetricsCalculator must use cost_basis_eur, not total_invested_eur.
+    """
+
+    def _make_strat06_result(
+        self,
+        direct_inflow_eur: float,
+        transfer_eur: float,
+        btc_bought: float,
+        btc_price: float,
+    ) -> "BacktestResult":
+        """Build a minimal BacktestResult with a STRAT_06_BASELINE pool.
+
+        Simulates:
+        - direct_inflow_eur arriving via add_cash (updates total_invested_eur)
+        - transfer_eur arriving via transfer_cash (bypasses add_cash, cash_eur only)
+        - All available cash spent on btc_bought BTC at btc_price
+        """
+        from btc_quant.backtester.models.result import BacktestResult
+
+        total_spent = direct_inflow_eur + transfer_eur
+        bl = StrategyTag.STRAT_06_BASELINE
+
+        pool = CapitalPool(strategy_tag=bl, cash_eur=0.0)
+        pool.add_cash(direct_inflow_eur, source="inflow")
+        pool.cash_eur += transfer_eur               # inter-pool transfer bypass
+        pool.add_btc(btc_bought, cost_eur=total_spent)
+        pool.remove_cash(total_spent, reason="buy")
+
+        snap = PortfolioSnapshot(
+            timestamp_utc=START,
+            btc_price=btc_price,
+            total_value_eur=btc_bought * btc_price,
+            total_btc=btc_bought,
+            cash_by_pool={bl: 0.0},
+            btc_by_pool={bl: btc_bought},
+            open_positions_count=1,
+        )
+        portfolio = Portfolio(pools={bl: pool})
+        return BacktestResult(
+            start_date_utc=START,
+            end_date_utc=START + timedelta(days=365),
+            initial_capital_eur=0.0,
+            strategies_used=[bl],
+            final_portfolio=portfolio,
+            equity_curve=[snap],
+            closed_trades=[],
+            trades_by_strategy={bl: []},
+        )
+
+    def test_avg_cost_basis_includes_inter_pool_transfers(self) -> None:
+        """
+        Regression test for F5.1 bug fix (DESIGN_REFINEMENT_002).
+
+        Pool receives €1,000 direct inflow + €500 inter-pool transfer,
+        then buys 0.01 BTC with all €1,500.
+
+        Correct cost basis : €1,500 / 0.01 = €150,000/BTC  (cost_basis_eur)
+        Buggy cost basis   : €1,000 / 0.01 = €100,000/BTC  (total_invested_eur)
+        """
+        result = self._make_strat06_result(
+            direct_inflow_eur=1_000.0,
+            transfer_eur=500.0,
+            btc_bought=0.01,
+            btc_price=200_000.0,
+        )
+        metrics = MetricsCalculator().calculate(result)
+
+        assert metrics.avg_cost_basis_eur_per_btc == pytest.approx(150_000.0, rel=1e-3)
+
+    def test_avg_cost_basis_equals_total_invested_when_no_transfers(self) -> None:
+        """When all capital comes from direct inflows, both fields agree."""
+        result = self._make_strat06_result(
+            direct_inflow_eur=1_500.0,
+            transfer_eur=0.0,
+            btc_bought=0.01,
+            btc_price=200_000.0,
+        )
+        metrics = MetricsCalculator().calculate(result)
+
+        assert metrics.avg_cost_basis_eur_per_btc == pytest.approx(150_000.0, rel=1e-3)
+
+    def test_avg_cost_basis_none_when_no_baseline_pool(self) -> None:
+        """avg_cost_basis is None when there is no STRAT_06_BASELINE pool."""
+        result = _make_result([10_000.0, 12_000.0], days=365)
+        metrics = MetricsCalculator().calculate(result)
+
+        assert metrics.avg_cost_basis_eur_per_btc is None
