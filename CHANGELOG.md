@@ -5,6 +5,23 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-05-15 — STRAT-07 scope decided
+
+### Decided
+
+- F6: STRAT-07 v1 scope locked to 12 technical signals from SYSTEM_FINAL §2.3.3,
+  organized in 5 categories (regime, mean reversion, momentum, volume, structure).
+  On-chain signals (MVRV, NUPL, SOPR, exchange flows) deferred to v2, evaluated
+  once after F14 paper trading completes. See
+  `docs/decisions/STRAT_07_SCOPE_DECISION.md` for v1 scope, v2 activation criteria,
+  and budget implications.
+
+### Added
+
+- `docs/decisions/` directory for binding architectural decisions
+- `docs/decisions/STRAT_07_SCOPE_DECISION.md` — Option C approval, v1 scope lock,
+  v2 activation criteria, out-of-scope list, budget implications, next phase (F7.1)
+
 ## [0.4.0] - 2026-05-15 — STRAT-06 validated
 
 ### Added
