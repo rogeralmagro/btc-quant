@@ -32,6 +32,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
     using SMA(50) with BTC-calibrated default threshold
 - F7.2: 32 unit tests on synthetic data and edge cases
   (980 passing total)
+- F7.3a: Category 3 (Momentum) signal modules in
+  `src/btc_quant/signals/momentum/`. All long-only:
+  - `is_macd_bullish(close, fast=12, slow=26, signal=9) -> SignalResult`
+    with active=True when MACD > Signal at last bar
+  - `is_bullish_trending(high, low, close, period=14, adx_threshold=25.0)
+    -> SignalResult` with active=True only when both ADX > threshold
+    AND +DI > -DI (combined trend strength + bullish direction)
+  - `is_roc_positive(close, period=10, threshold_pct=0.0) -> SignalResult`
+- F7.3a: 28 unit tests on synthetic data and edge cases
+  (1008 passing total)
 
 ### Design notes
 - ATR regime percentile uses midpoint convention: ties contribute
@@ -50,6 +60,19 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   .rolling(N).mean() default behavior).
 - threshold_pct=-10% in distance_from_ma is a BTC-calibrated
   default. Other markets may require recalibration.
+- F7.3a ADX uses Wilder's smoothing throughout (DI+/DI-/ATR/ADX
+  all use `ewm(alpha=1/period, adjust=False, min_periods=period)`),
+  not standard EMA. This is the original Wilder formulation and
+  matches reference TA implementations.
+- F7.3a ADX requires ~2*period bars of data due to cascaded
+  smoothing (DM/ATR → DX → ADX). Guard `len < period*2` returns
+  NaN result.
+- F7.3a ADX guard against `di_sum == 0` (perfectly flat price)
+  to avoid NaN propagation from division by zero in DX.
+- F7.3a ADX threshold test uses random walk with seed=42 plus
+  dynamic threshold (adx ± 1) instead of a hardcoded value,
+  to avoid degenerate ADX=100 from a perfect linear input.
+  Test depends on numpy RNG implementation (rarely changes).
 
 ## [0.5.0] - 2026-05-15 — STRAT-07 scope decided
 
