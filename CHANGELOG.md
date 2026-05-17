@@ -42,6 +42,21 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   - `is_roc_positive(close, period=10, threshold_pct=0.0) -> SignalResult`
 - F7.3a: 28 unit tests on synthetic data and edge cases
   (1008 passing total)
+- F7.3b: Category 4 (Volume) signal modules in
+  `src/btc_quant/signals/volume/`:
+  - `is_obv_bullish_trend(close, volume, ma_period=20) -> SignalResult`
+    with active=True when OBV > SMA(OBV, N)
+  - `is_high_volume(volume, rolling_window=252, threshold_percentile=75.0)
+    -> SignalResult`, direction-agnostic by design (high volume regime
+    as confluence context, directional confirmation from Cat 1 + Cat 3)
+- F7.3b: Category 5 (Structure) signal module in
+  `src/btc_quant/signals/structure/`:
+  - `is_bullish_market_structure(high, low, swing_lookback=5) -> SignalResult`
+    using symmetric pivot detection, active=True when both higher highs
+    AND higher lows on most recent confirmed swings
+- F7.3b: 32 unit tests on synthetic data and edge cases (1040 passing total)
+- F7 block complete: 12 individual signals across 5 categories implemented,
+  ~130 new tests vs F6 baseline. Ready for F8 (ConfluenceScorer).
 
 ### Design notes
 - ATR regime percentile uses midpoint convention: ties contribute
@@ -73,6 +88,20 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   dynamic threshold (adx ± 1) instead of a hardcoded value,
   to avoid degenerate ADX=100 from a perfect linear input.
   Test depends on numpy RNG implementation (rarely changes).
+- F7.3b OBV uses np.sign(close.diff()) with iloc[0]=0 to handle
+  first bar, then cumulative sum for vectorized computation.
+- F7.3b high_volume reuses the midpoint percentile convention
+  from F7.1 ATR regime: (n_below + 0.5*n_equal)/n_total*100,
+  with trailing window that excludes the current bar.
+- F7.3b market structure uses symmetric pivot detection
+  (swing_lookback bars before AND after). Most recent confirmed
+  swing is at least swing_lookback bars old (structural lag, by
+  design). Strict > comparison for both pivot detection and HH/HL
+  check (equal-level swings do NOT count).
+- F7.3b structure tests use explicitly constructed synthetic data
+  rather than transformations of bullish data: reversing a bullish
+  series with [::-1] does not produce a clean bearish pattern in
+  pivot detection (the logic is direction-agnostic over time).
 
 ## [0.5.0] - 2026-05-15 — STRAT-07 scope decided
 
