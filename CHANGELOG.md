@@ -21,6 +21,17 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   regime classification output
 - F7.1: 33 unit tests on synthetic data and edge cases
   (948 passing total)
+- F7.2: Category 2 (Mean Reversion) signal modules in
+  `src/btc_quant/signals/mean_reversion/`. All three signals are
+  long-only (no overbought / upper-band / above-MA branches):
+  - `is_rsi_oversold(close, period=14, threshold=30.0) -> SignalResult`
+    using Wilder's smoothing
+  - `is_at_bb_lower(close, period=20, num_std=2.0) -> SignalResult`
+    returning Bollinger %B as value
+  - `is_far_below_ma(close, period=50, threshold_pct=-10.0) -> SignalResult`
+    using SMA(50) with BTC-calibrated default threshold
+- F7.2: 32 unit tests on synthetic data and edge cases
+  (980 passing total)
 
 ### Design notes
 - ATR regime percentile uses midpoint convention: ties contribute
@@ -28,6 +39,17 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   (NORMAL), not 0 (CALM)
 - All signal modules cast np.bool_/np.float64 to native bool/float
   for serialization safety
+- F7.2 signals are strictly long-only by design (per
+  STRAT_07_SCOPE_DECISION). Enforced via tests that assert
+  active=False on bearish-extended inputs (overbought RSI,
+  price above upper BB, price above SMA).
+- Bollinger Bands use ddof=0 (population std) per industry TA
+  convention for reproducibility with TradingView and other
+  TA libraries.
+- SMA includes the current bar in rolling window (pandas
+  .rolling(N).mean() default behavior).
+- threshold_pct=-10% in distance_from_ma is a BTC-calibrated
+  default. Other markets may require recalibration.
 
 ## [0.5.0] - 2026-05-15 — STRAT-07 scope decided
 
