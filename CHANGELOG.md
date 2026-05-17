@@ -5,6 +5,30 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+- F7.1: Category 1 (Regime) signal modules in
+  `src/btc_quant/signals/regime/`:
+  - `is_bullish_ema_trend(close, fast=50, slow=200) -> SignalResult`
+  - `classify_atr_regime(high, low, close, atr_period=14,
+    rolling_window=252) -> AtrRegimeResult` and wrapper
+    `is_atr_regime_tradeable(...) -> SignalResult`
+  - `is_htf_aligned_bullish(close_1d, close_1w, daily_fast=50,
+    daily_slow=200, weekly_fast=10, weekly_slow=40) -> SignalResult`
+- F7.1: Shared `SignalResult` dataclass in
+  `src/btc_quant/signals/types.py` (frozen, active: bool +
+  value: float)
+- F7.1: `AtrRegime` enum and `AtrRegimeResult` dataclass for rich
+  regime classification output
+- F7.1: 33 unit tests on synthetic data and edge cases
+  (948 passing total)
+
+### Design notes
+- ATR regime percentile uses midpoint convention: ties contribute
+  0.5 each, so a constant historical window yields percentile=50
+  (NORMAL), not 0 (CALM)
+- All signal modules cast np.bool_/np.float64 to native bool/float
+  for serialization safety
+
 ## [0.5.0] - 2026-05-15 — STRAT-07 scope decided
 
 ### Decided
