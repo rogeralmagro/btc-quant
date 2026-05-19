@@ -57,6 +57,20 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - F7.3b: 32 unit tests on synthetic data and edge cases (1040 passing total)
 - F7 block complete: 12 individual signals across 5 categories implemented,
   ~130 new tests vs F6 baseline. Ready for F8 (ConfluenceScorer).
+- F8.1: ConfluenceScorer module in
+  `src/btc_quant/strategies/strat07/confluence_scorer.py`:
+  - `evaluate_confluence(signals, min_score=7, categories=None,
+    mandatory=None, require_full_data=True) -> ConfluenceResult`
+    as a stateless pure function
+  - `ConfluenceResult` frozen dataclass with enter, score,
+    threshold_met, mandatory_met, data_sufficient,
+    active_by_category, active_signals
+  - Locked constants for STRAT-07 v1: CATEGORIES (5 groups, 12
+    signal names total), MANDATORY_CATEGORIES = ("regime",
+    "momentum"), DEFAULT_MIN_SCORE = 7, TOTAL_SIGNALS = 12
+- F8.1: 19 unit tests covering full match, partial-active,
+  mandatory failures, data sufficiency, ValueError validation,
+  and constant-shape invariants (1059 passing total)
 
 ### Design notes
 - ATR regime percentile uses midpoint convention: ties contribute
@@ -102,6 +116,22 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   rather than transformations of bullish data: reversing a bullish
   series with [::-1] does not produce a clean bearish pattern in
   pivot detection (the logic is direction-agnostic over time).
+- F8.1 mandatory category semantics use strict majority via the
+  formula `active_count * 2 > category_size`. For 3-signal
+  categories (regime, mean_reversion, momentum): >=2 active.
+  For 1-signal category (structure): >=1 active.
+- F8.1 data_sufficient flag inspects all signals in the input
+  dict, not only active ones. A signal returning
+  SignalResult(active=False, value=NaN) signals data warm-up
+  incompleteness, not a "decided not to fire" outcome; both cases
+  must be treated as a data deficit so the entry is blocked.
+- F8.1 require_full_data parameter gates only the enter field,
+  never the data_sufficient flag itself. The flag always reflects
+  reality even when entry is permitted with partial data.
+- F8.1 ValueError raised separately for missing vs unexpected
+  signal names (two distinct root causes for caller).
+- F8.1 active_signals exposed as alphabetically sorted Tuple for
+  reproducible debug output.
 
 ## [0.5.0] - 2026-05-15 — STRAT-07 scope decided
 
